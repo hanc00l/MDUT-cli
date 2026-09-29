@@ -7,102 +7,125 @@
     <groupId>org.mdut</groupId>
     <artifactId>Multiple.Database.Utilization.Tools</artifactId>
     <version>2.1.1</version>
+    <packaging>jar</packaging>
+
+    <properties>
+        <!-- JDK 8 基线（AGENTS.md §1.1）：交付字节码必须 52.0，禁用 JDK9+ 语法与 API -->
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
 
     <build>
+        <finalName>mdut</finalName>
         <plugins>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.11.0</version>
+                <configuration>
+                    <source>1.8</source>
+                    <target>1.8</target>
+                    <encoding>UTF-8</encoding>
+                </configuration>
+            </plugin>
+            <!-- uber-jar：含全部运行依赖；⚠️ 与 GSL5 相反——Driver/、Plugins/、data.db、GUI 资源
+                 一律不进 jar（它们不在 resources 目录，天然排除；若挪进 resources 视为违约，AGENTS.md §1.2） -->
+            <plugin>
                 <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.6.0</version>
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>main</mainClass>
+                            <mainClass>cli.CliMain</mainClass>
                         </manifest>
                     </archive>
                     <descriptorRefs>
                         <descriptorRef>jar-with-dependencies</descriptorRef>
                     </descriptorRefs>
                 </configuration>
+                <executions>
+                    <execution>
+                        <id>make-assembly</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- 单测（cli/tests 的 golden 回归由 cli/tests/run.sh 黑盒执行；此处挂 JUnit 白盒单测） -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>2.22.2</version>
             </plugin>
         </plugins>
     </build>
+
     <dependencies>
+        <!-- task 级 data.db（WAL + busy_timeout），连接记录存储 -->
         <dependency>
             <groupId>org.xerial</groupId>
             <artifactId>sqlite-jdbc</artifactId>
             <version>3.34.0</version>
         </dependency>
+        <!-- 信封 JSON 序列化（Dao 层既用 org.json，CLI 层沿用避免双库） -->
         <dependency>
             <groupId>org.json</groupId>
             <artifactId>json</artifactId>
             <version>20201115</version>
         </dependency>
-        <!-- https://mvnrepository.com/artifact/org.yaml/snakeyaml -->
-        <dependency>
-            <groupId>org.yaml</groupId>
-            <artifactId>snakeyaml</artifactId>
-            <version>1.28</version>
-        </dependency>
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <version>RELEASE</version>
-            <scope>compile</scope>
-        </dependency>
-
-        <dependency>
-            <groupId>org.pegdown</groupId>
-            <artifactId>pegdown</artifactId>
-            <version>1.6.0</version>
-        </dependency>
-
+        <!-- Redis 原生协议（RedisDao / 主从 rogue 范式）；3.x 为 JDK8 兼容版本线 -->
         <dependency>
             <groupId>redis.clients</groupId>
             <artifactId>jedis</artifactId>
             <version>3.1.0</version>
         </dependency>
-
+        <!-- MongoDB info 探测（Keep 项，Extend MongoDbDao 路线）；4.x 支持 Java 8 -->
+        <dependency>
+            <groupId>org.mongodb</groupId>
+            <artifactId>mongodb-driver-sync</artifactId>
+            <version>4.11.1</version>
+        </dependency>
+        <!-- Dao 工具方法引用（splitFiles/splitDisk 等所在 Utils 未直接用，但 Oracle 插件链沿用其字符串处理） -->
         <dependency>
             <groupId>commons-lang</groupId>
             <artifactId>commons-lang</artifactId>
             <version>2.6</version>
         </dependency>
-
-        <!-- https://mvnrepository.com/artifact/com.oracle.ojdbc/orai18n -->
+        <!-- Oracle 字符集补充（ZHS16GBK 等中文编码需 orai18n，随 uber-jar 供子加载器驱动回查父classpath） -->
         <dependency>
             <groupId>com.oracle.ojdbc</groupId>
             <artifactId>orai18n</artifactId>
             <version>19.3.0.0</version>
         </dependency>
-        <dependency>
-            <groupId>com.alibaba</groupId>
-            <artifactId>fastjson</artifactId>
-            <version>1.2.83</version>
-        </dependency>
-
-
+        <!-- HTTP 隧道 Dao（legacy 保留，恢复 http 隧道时启用）与 UpdateController 曾用；okhttps 3.x JDK8 兼容 -->
         <dependency>
             <groupId>com.ejlchina</groupId>
             <artifactId>okhttps</artifactId>
             <version>3.3.0</version>
         </dependency>
-
+        <!-- Base64/Hex 工具（Dao/插件链引用） -->
         <dependency>
             <groupId>commons-codec</groupId>
             <artifactId>commons-codec</artifactId>
             <version>1.8</version>
         </dependency>
-
+        <!-- 白盒单测 -->
         <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt</artifactId>
-            <version>0.9.1</version>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.13.2</version>
+            <scope>test</scope>
         </dependency>
 
+        <!-- 已移除（AGENTS.md §1.2 依赖终态）：
+             snakeyaml 1.28   —— config.yaml 取消（YamlConfigs 已删除）
+             lombok  RELEASE  —— 全源码零引用
+             pegdown  1.6.0   —— 仅 GUI changelog 渲染（Utils.generateHtml 已删）
+             jjwt     0.9.1   —— 全源码零引用
+             fastjson 1.2.83 —— 仅 GUI 更新检查（Utils.checkVersion 已删） -->
     </dependencies>
-
-    <properties>
-        <maven.compiler.source>8</maven.compiler.source>
-        <maven.compiler.target>8</maven.compiler.target>
-    </properties>
 
 </project>

@@ -1,29 +1,25 @@
 package Dao;
 
-import Controller.OracleController;
-import Entity.ControllersFactory;
-import Util.MessageUtil;
+import Util.DriverLoader;
+import Util.JdbcProfiles;
 import Util.OracleSqlUtil;
+import Util.Reporter;
 import Util.Utils;
-import Util.YamlConfigs;
-import javafx.application.Platform;
 
 import java.io.File;
-import java.lang.reflect.Method;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.sql.*;
 import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Locale;
-import java.util.Map;
+import java.util.Properties;
 
 import static Util.Utils.splitDisk;
 import static Util.Utils.splitFiles;
 
 
 /**
- * @author ch1ng
+ * CLI 化解耦（M1）：仅换输出口——Controller/TextArea → Reporter；config.yaml → JdbcProfiles；
+ * DriverManager+addURL → DriverLoader。业务逻辑（SQL 模板/Java Source 注入/Scheduler 任务）零改动。
  */
 public class OracleDao {
 
@@ -33,23 +29,23 @@ public class OracleDao {
     private String USERNAME;
     private String PASSWORD;
     private Connection CONN = null;
-    private URLClassLoader URLCLASSLOADER;
-    private Method METHOD;
     private String OS = "linux";
 
 
     /**
-     * 用此方法获取 OracleController 的日志框
+     * 统一输出口（原 OracleController 日志框；缺省空实现，宿主经 setReporter 注入）
      */
-    private OracleController oracleController = (OracleController) ControllersFactory.controllers.get(OracleController.class.getSimpleName());
+    private Reporter reporter = Reporter.NONE;
+
+    public void setReporter(Reporter reporter) {
+        this.reporter = reporter;
+    }
 
     public OracleDao(String ip,String port,String database,String username,String password,String timeout) throws Exception {
-        YamlConfigs configs = new YamlConfigs();
-        Map<String, Object> yamlToMap = configs.getYamlToMap("config.yaml");
-        // 从配置文件读取变量
-        JARFILE = (String) configs.getValue("Oracle.Driver",yamlToMap);
-        JDBCURL = (String) configs.getValue("Oracle.JDBCUrl",yamlToMap);
-        DRIVER = (String) configs.getValue("Oracle.ClassName",yamlToMap);
+        // 零配置：驱动与 URL 模板取自 JdbcProfiles（原 config.yaml 的 Oracle.* 三项）
+        JARFILE = JdbcProfiles.driverPath(JdbcProfiles.ORACLE_JAR);
+        JDBCURL = JdbcProfiles.ORACLE_URL_SID;
+        DRIVER = JdbcProfiles.ORACLE_CLASS;
         // 进行时间转换
         timeout = String.valueOf(Integer.parseInt(timeout) * 1000);
         JDBCURL = MessageFormat.format(JDBCURL,ip,port,database);
@@ -57,15 +53,16 @@ public class OracleDao {
         PASSWORD = password;
         System.setProperty("oracle.jdbc.ReadTimeout",timeout);
         System.setProperty("oracle.net.CONNECT_TIMEOUT",timeout);
-        // 动态加载
-        URLCLASSLOADER = (URLClassLoader) ClassLoader.getSystemClassLoader();
-        METHOD = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);
-        METHOD.setAccessible(true);
-        // 将路径转为 url 类型进行加载，修复系统路径不兼容问题
-        URL url = (new File(JARFILE)).toURI().toURL();
-        METHOD.invoke(URLCLASSLOADER, url);
-        Class.forName(DRIVER);
+    }
 
+    /**
+     * 连接属性（user/password）
+     */
+    private Properties connectProps() {
+        Properties props = new Properties();
+        props.setProperty("user", USERNAME);
+        props.setProperty("password", PASSWORD);
+        return props;
     }
 
     /**
@@ -75,19 +72,15 @@ public class OracleDao {
      */
     public void testConnection() throws Exception {
         if (CONN == null || CONN.isClosed()) {
-            // 重新排序 Drivers 的顺序，regroupDrivers 参数是输入当前Dao类的数据库名称
-            Utils.regroupDrivers("oracle");
-            DriverManager.getConnection(JDBCURL,USERNAME,PASSWORD);
+            CONN = DriverLoader.connect(JARFILE, DRIVER, JDBCURL, connectProps());
             closeConnection();
         }
 
     }
 
-    public Connection getConnection() throws SQLException {
+    public Connection getConnection() throws Exception {
         if (CONN == null || CONN.isClosed()) {
-            // 重新排序 Drivers 的顺序，regroupDrivers 参数是输入当前Dao类的数据库名称
-            Utils.regroupDrivers("oracle");
-            CONN = DriverManager.getConnection(JDBCURL,USERNAME,PASSWORD);
+            CONN = DriverLoader.connect(JARFILE, DRIVER, JDBCURL, connectProps());
         }
         return CONN;
     }
@@ -145,11 +138,9 @@ public class OracleDao {
             if(version.toLowerCase().contains("windows")){
                 OS = "windows";
             }
-            oracleController.oracleLogTextArea.appendText(Utils.log("当前数据库版本:\n" + version));
+            reporter.log(Utils.log("当前数据库版本:\n" + version));
         }catch (Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -161,14 +152,12 @@ public class OracleDao {
             String sqlstring = OracleSqlUtil.isDBASql;
             String dbares = executeSql(sqlstring);
             if("TRUE".equals(dbares.replace("\n",""))){
-                oracleController.oracleLogTextArea.appendText(Utils.log("当前账号是 DBA 权限"));
+                reporter.log(Utils.log("当前账号是 DBA 权限"));
             }else {
-                oracleController.oracleLogTextArea.appendText(Utils.log("当前账号不是 DBA 权限"));
+                reporter.log(Utils.log("当前账号不是 DBA 权限"));
             }
         }catch (Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -207,16 +196,14 @@ public class OracleDao {
             }
             // 执行当前任务
             executeSql(String.format(ENABLESql,randomJobName));
-            oracleController.oracleLogTextArea.appendText(Utils.log("正在获取 "+ randomJobName +" 任务状态...请稍等"));
+            reporter.log(Utils.log("正在获取 "+ randomJobName +" 任务状态...请稍等"));
             // 获取任务状态
             getJobStatus(randomJobName);
-            oracleController.oracleLogTextArea.appendText(Utils.log("获取 " + randomJobName +" 任务状态成功！"));
+            reporter.log(Utils.log("获取 " + randomJobName +" 任务状态成功！"));
             // 删除任务
             deleteJob(randomJobName,"True","False");
         }catch (Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -229,17 +216,15 @@ public class OracleDao {
             String checkSql = String.format(OracleSqlUtil.checkJobSql,jobname);
             String realJobName = executeSql(checkSql).replace("\n","");
             if("".equals(realJobName)){
-                oracleController.oracleLogTextArea.appendText(Utils.log(jobname +" 任务不存在！"));
+                reporter.log(Utils.log(jobname +" 任务不存在！"));
                 return;
             }
             String sql = OracleSqlUtil.deleteJobSql;
             sql = String.format(sql,jobname,force,defer);
             executeSql(sql);
-            oracleController.oracleLogTextArea.appendText(Utils.log(jobname +" 任务删除成功！"));
+            reporter.log(Utils.log(jobname +" 任务删除成功！"));
         }catch (Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -270,13 +255,13 @@ public class OracleDao {
                 additional_info = rs.getString("additional_info");
             }
             if("FAILED".equals(status)){
-                oracleController.oracleLogTextArea.appendText(Utils.log(jobname + " 任务执行失败！"));
-                oracleController.Textarea_OracleCommandResult.setText(additional_info);
+                reporter.log(Utils.log(jobname + " 任务执行失败！"));
+                reporter.result(additional_info);
             }else if("".equals(status)){
-                oracleController.oracleLogTextArea.appendText(Utils.log(jobname + " 任务正在进行..."));
+                reporter.log(Utils.log(jobname + " 任务正在进行..."));
                 //getJobStatus(jobname);
             }else {
-                oracleController.oracleLogTextArea.appendText(Utils.log(jobname + " 任务执行完成！"));
+                reporter.log(Utils.log(jobname + " 任务执行完成！"));
             }
         }
     }
@@ -301,17 +286,15 @@ public class OracleDao {
             String SHELLUTILSOURCE = Utils.readFile(path);
             CREATE_SOURCE = String.format(CREATE_SOURCE, SHELLUTILSOURCE);
             executeSql(CREATE_SOURCE);
-            oracleController.oracleLogTextArea.appendText(Utils.log("导入 JAVA 代码成功！"));
+            reporter.log(Utils.log("导入 JAVA 代码成功！"));
             executeSql(GRANT_JAVA_EXEC);
             executeSql(GRANT_JAVA_EXEC2);
             executeSql(GRANT_JAVA_EXEC3);
-            oracleController.oracleLogTextArea.appendText(Utils.log("赋权成功！"));
+            reporter.log(Utils.log("赋权成功！"));
             executeSql(CREATE_FUNCTION);
-            oracleController.oracleLogTextArea.appendText(Utils.log("创建 ShellRun 函数成功！"));
+            reporter.log(Utils.log("创建 ShellRun 函数成功！"));
         }catch (Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -333,16 +316,14 @@ public class OracleDao {
             String FILEUTILSOURCE = Utils.readFile(path);
             CREATE_SOURCE = String.format(CREATE_SOURCE, FILEUTILSOURCE);
             executeSql(CREATE_SOURCE);
-            oracleController.oracleLogTextArea.appendText(Utils.log("导入 JAVA 代码成功！"));
+            reporter.log(Utils.log("导入 JAVA 代码成功！"));
             executeSql(GRANT_JAVA_EXEC);
             executeSql(GRANT_JAVA_EXEC1);
-            oracleController.oracleLogTextArea.appendText(Utils.log("赋权成功！"));
+            reporter.log(Utils.log("赋权成功！"));
             executeSql(CREATE_FUNCTION);
-            oracleController.oracleLogTextArea.appendText(Utils.log("创建 FileRun 函数成功！"));
+            reporter.log(Utils.log("创建 FileRun 函数成功！"));
         }catch (Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -361,7 +342,7 @@ public class OracleDao {
                 case "java":
                     String cmdSqlString = OracleSqlUtil.shellRunSql;
                     res = executeSql(String.format(cmdSqlString,command,code));
-                    oracleController.oracleLogTextArea.appendText(Utils.log("执行命令成功！"));
+                    reporter.log(Utils.log("执行命令成功！"));
                     break;
                 case "scheduler":
                     schedulerCmd(command);
@@ -370,16 +351,14 @@ public class OracleDao {
                     break;
             }
         }catch (Exception e){
-            oracleController.oracleLogTextArea.appendText(Utils.log("执行命令失败！"));
+            reporter.log(Utils.log("执行命令失败！"));
             String r = e.getMessage();
             if(r.contains("ORA-00904")){
-                oracleController.oracleLogTextArea.appendText(Utils.log("请先初始化方法！"));
+                reporter.log(Utils.log("请先初始化方法！"));
             }else if(r.contains("ORA-27486")){
-                oracleController.oracleLogTextArea.appendText(Utils.log("当前账号权限不足！无法执行！"));
+                reporter.log(Utils.log("当前账号权限不足！无法执行！"));
             } else {
-                Platform.runLater(() ->{
-                    MessageUtil.showExceptionMessage(e,e.getMessage());
-                });
+                reporter.error(e.getMessage(), e);
             }
         }
         return res;
@@ -399,14 +378,12 @@ public class OracleDao {
             if(!"".equals(res)){
                 executeSql(dropFuncSql);
                 executeSql(dropJAVASql);
-                oracleController.oracleLogTextArea.appendText(Utils.log("删除 SHELLRUN 函数成功！"));
+                reporter.log(Utils.log("删除 SHELLRUN 函数成功！"));
             }else {
-                oracleController.oracleLogTextArea.appendText(Utils.log("删除 SHELLRUN 函数失败！函数可能不存在！"));
+                reporter.log(Utils.log("删除 SHELLRUN 函数失败！函数可能不存在！"));
             }
         }catch (Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -424,14 +401,12 @@ public class OracleDao {
             if(!"".equals(res)){
                 executeSql(dropFuncSql);
                 executeSql(dropJAVASql);
-                oracleController.oracleLogTextArea.appendText(Utils.log("删除 FILERUN 函数成功！"));
+                reporter.log(Utils.log("删除 FILERUN 函数成功！"));
             }else {
-                oracleController.oracleLogTextArea.appendText(Utils.log("删除 FILERUN 函数失败！"));
+                reporter.log(Utils.log("删除 FILERUN 函数失败！"));
             }
         }catch (Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -445,15 +420,13 @@ public class OracleDao {
         try {
             String res1 = executeSql(sqlstring1).replace("\n","");
             if("".equals(res1)){
-                oracleController.oracleLogTextArea.appendText(Utils.log("SHELLRUN 函数不存在！，请先创建函数！"));
+                reporter.log(Utils.log("SHELLRUN 函数不存在！，请先创建函数！"));
             }else {
                 executeSql(String.format(OracleSqlUtil.reverseJavaShellSql,ip,port));
-                oracleController.oracleLogTextArea.appendText(Utils.log("反弹 Shell 成功！"));
+                reporter.log(Utils.log("反弹 Shell 成功！"));
             }
         } catch (Exception e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -470,9 +443,7 @@ public class OracleDao {
             tempres = executeSql(sql);
             res = splitDisk(tempres);
         } catch (Exception e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return res;
     }
@@ -494,14 +465,12 @@ public class OracleDao {
         try {
             tempres = executeSql(sql);
             if(tempres.contains("ERROR://")){
-                oracleController.oracleLogTextArea.appendText(Utils.log("获取所有文件失败！错误："+ tempres.replace("ERROR://","")));
+                reporter.log(Utils.log("获取所有文件失败！错误："+ tempres.replace("ERROR://","")));
                 return res;
             }
             res = splitFiles(tempres);
         } catch (Exception e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return res;
     }
@@ -517,18 +486,14 @@ public class OracleDao {
             sql = String.format(sql,path,contexts);
             String res = executeSql(sql);
             if(res.startsWith("ok")){
-                oracleController.oracleLogTextArea.appendText(Utils.log("上传文件成功！"));
+                reporter.log(Utils.log("上传文件成功！"));
             }else {
-                Platform.runLater(() ->{
-                    MessageUtil.showErrorMessage(res);
-                });
-                oracleController.oracleLogTextArea.appendText(Utils.log("上传文件失败！"));
+                reporter.error(res, null);
+                reporter.log(Utils.log("上传文件失败！"));
             }
             //PublicUtil.log("上传文件成功！");
         } catch (Exception e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
             //PublicUtil.log(throwables.getMessage());
         }
     }
@@ -545,9 +510,7 @@ public class OracleDao {
             sql = String.format(sql,path);
             res = executeSql(sql);
         }catch (Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return res;
     }
@@ -564,10 +527,30 @@ public class OracleDao {
             sql = String.format(sql,path);
             res = executeSql(sql);
         }catch (Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return res;
+    }
+
+    // ---- 只读状态访问器（CLI dispatcher 结构化 info 用；不影响既有行为） ----
+
+    public String getOs() {
+        return OS;
+    }
+
+    public String getConnectionUrl() {
+        return JDBCURL;
+    }
+
+    /**
+     * 查询当前账号是否 DBA（不落日志，供 info.data.is_dba）
+     */
+    public boolean queryIsDba() {
+        try {
+            String res = executeSql(OracleSqlUtil.isDBASql).replace("\n", "");
+            return "TRUE".equals(res);
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

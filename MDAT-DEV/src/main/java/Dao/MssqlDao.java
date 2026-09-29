@@ -1,22 +1,21 @@
 package Dao;
 
-import Controller.MssqlController;
-import Entity.ControllersFactory;
-import Util.MessageUtil;
+import Util.DriverLoader;
+import Util.JdbcProfiles;
 import Util.MssqlSqlUtil;
+import Util.Reporter;
 import Util.Utils;
-import Util.YamlConfigs;
-import javafx.application.Platform;
 
 import java.io.File;
-import java.lang.reflect.Method;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.sql.*;
 import java.text.MessageFormat;
 import java.util.ArrayList;
-import java.util.Map;
+import java.util.Properties;
 
+/**
+ * CLI 化解耦（M1）：仅换输出口——Controller/TextArea → Reporter；config.yaml → JdbcProfiles；
+ * DriverManager+addURL → DriverLoader。业务逻辑（SQL 模板/CLR 管道/spoa 文件操作）零改动。
+ */
 public class MssqlDao {
     private String JARFILE;
     private String JDBCURL;
@@ -26,36 +25,38 @@ public class MssqlDao {
     private int TIMEOUT;
 
     private Connection CONN = null;
-    private URLClassLoader URLCLASSLOADER = null;
-    private Method METHOD = null;
     private Statement stmt = null;
     private ResultSet rs = null;
     /**
-     * 用此方法获取 MysqlController 的日志框
+     * 统一输出口（原 MssqlController 日志框；缺省空实现，宿主经 setReporter 注入）
      */
-    private MssqlController mssqlController = (MssqlController) ControllersFactory.controllers.get(MssqlController.class.getSimpleName());
+    private Reporter reporter = Reporter.NONE;
+
+    public void setReporter(Reporter reporter) {
+        this.reporter = reporter;
+    }
 
     public MssqlDao(String ip,String port,String database,String username,String password,String timeout) throws Exception {
-        YamlConfigs configs = new YamlConfigs();
-        Map<String, Object> yamlToMap = configs.getYamlToMap("config.yaml");
-        // 从配置文件读取变量
-        JARFILE = (String) configs.getValue("Mssql.Driver",yamlToMap);
-        JDBCURL = (String) configs.getValue("Mssql.JDBCUrl",yamlToMap);
-        DRIVER = (String) configs.getValue("Mssql.ClassName",yamlToMap);
+        // 零配置：驱动与 URL 模板取自 JdbcProfiles（原 config.yaml 的 Mssql.* 三项）
+        JARFILE = JdbcProfiles.driverPath(JdbcProfiles.MSSQL_JAR);
+        JDBCURL = JdbcProfiles.MSSQL_URL;
+        DRIVER = JdbcProfiles.MSSQL_CLASS;
         // 进行时间转换
         //timeout = String.valueOf(Integer.parseInt(timeout) * 1000);
         JDBCURL = MessageFormat.format(JDBCURL,ip,port,database,timeout);
         USERNAME = username;
         PASSWORD = password;
         TIMEOUT = Integer.parseInt(timeout);
-        // 动态加载
-        URLCLASSLOADER = (URLClassLoader) ClassLoader.getSystemClassLoader();
-        METHOD = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);
-        METHOD.setAccessible(true);
-        // 将路径转为 url 类型进行加载，修复系统路径不兼容问题
-        URL url = (new File(JARFILE)).toURI().toURL();
-        METHOD.invoke(URLCLASSLOADER, url);
-        Class.forName(DRIVER);
+    }
+
+    /**
+     * 连接属性（user/password）
+     */
+    private Properties connectProps() {
+        Properties props = new Properties();
+        props.setProperty("user", USERNAME);
+        props.setProperty("password", PASSWORD);
+        return props;
     }
 
     /**
@@ -63,20 +64,16 @@ public class MssqlDao {
      * @return
      * @throws java.sql.SQLException
      */
-    public void testConnection() throws java.sql.SQLException {
+    public void testConnection() throws Exception {
         if (CONN == null || CONN.isClosed()) {
-            // 重新排序 Drivers 的顺序，regroupDrivers 参数是输入当前Dao类的数据库名称
-            Utils.regroupDrivers("sqlserverdriver");
-            DriverManager.getConnection(JDBCURL, USERNAME, PASSWORD);
+            CONN = DriverLoader.connect(JARFILE, DRIVER, JDBCURL, connectProps());
             closeConnection();
         }
     }
 
-    public Connection getConnection() throws java.sql.SQLException {
+    public Connection getConnection() throws Exception {
         if (CONN == null || CONN.isClosed()) {
-            // 重新排序 Drivers 的顺序，regroupDrivers 参数是输入当前Dao类的数据库名称
-            Utils.regroupDrivers("sqlserverdriver");
-            CONN = DriverManager.getConnection(JDBCURL, USERNAME, PASSWORD);
+            CONN = DriverLoader.connect(JARFILE, DRIVER, JDBCURL, connectProps());
         }
         return CONN;
     }
@@ -134,11 +131,9 @@ public class MssqlDao {
         try {
 
             excute(MssqlSqlUtil.activationXPCMDSql,"");
-            mssqlController.mssqlLogTextArea.appendText(Utils.log("XP_Cmdshell 激活成功！"));
+            reporter.log(Utils.log("XP_Cmdshell 激活成功！"));
         } catch (Exception e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -148,11 +143,9 @@ public class MssqlDao {
     public void activateOAP(){
         try {
             excute(MssqlSqlUtil.activationOAPSql,"");
-            mssqlController.mssqlLogTextArea.appendText(Utils.log("Ole Automation Procedures 激活成功！"));
+            reporter.log(Utils.log("Ole Automation Procedures 激活成功！"));
         } catch (Exception e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
 
     }
@@ -171,9 +164,7 @@ public class MssqlDao {
             String sqlStr = String.format(MssqlSqlUtil.XPCMDSql,command);
             res = excute(sqlStr,code);
         } catch (Exception e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return res;
     }
@@ -201,9 +192,7 @@ public class MssqlDao {
             excute(String.format(MssqlSqlUtil.getResFromTableSql,timeout,path.replace("\"","")),"");
             oashellres = excute(MssqlSqlUtil.getOaShellResultSql,code);
         } catch (SQLException e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });        }
+            reporter.error(e.getMessage(), e);        }
         return oashellres;
     }
 
@@ -237,9 +226,7 @@ public class MssqlDao {
             excute(sqlString,code);
             res =  "命令执行成功！该方法没有回显";
         } catch (SQLException e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });        }
+            reporter.error(e.getMessage(), e);        }
         return res;
     }
 
@@ -253,11 +240,9 @@ public class MssqlDao {
             String sqlString = MssqlSqlUtil.versionSql;
             res = excute(sqlString,"");
             res = res.replace("\n","");
-            mssqlController.mssqlLogTextArea.appendText(Utils.log("当前数据库版本:\n" + res));
+            reporter.log(Utils.log("当前数据库版本:\n" + res));
         } catch (SQLException e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return res;
     }
@@ -272,14 +257,12 @@ public class MssqlDao {
         try {
             res = excute(sql,"").replace("\n","");
             if ("1".equals(res)) {
-                mssqlController.mssqlLogTextArea.appendText(Utils.log("该账号是 DBA 权限！"));
+                reporter.log(Utils.log("该账号是 DBA 权限！"));
             } else {
-                mssqlController.mssqlLogTextArea.appendText(Utils.log("该账号不是 DBA 权限！"));
+                reporter.log(Utils.log("该账号不是 DBA 权限！"));
             }
         } catch (SQLException e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -289,18 +272,16 @@ public class MssqlDao {
     public boolean clearHistory(){
         try {
             excute(MssqlSqlUtil.closeXPCMDSql,"");
-            mssqlController.mssqlLogTextArea.appendText(Utils.log("XP_Cmdshell 关闭成功！"));
+            reporter.log(Utils.log("XP_Cmdshell 关闭成功！"));
             excute(MssqlSqlUtil.closeOapSql,"");
-            mssqlController.mssqlLogTextArea.appendText(Utils.log("Ole Automation Procedures 关闭成功！"));
+            reporter.log(Utils.log("Ole Automation Procedures 关闭成功！"));
             excute(MssqlSqlUtil.deleteOashellResultSql,"");
-            mssqlController.mssqlLogTextArea.appendText(Utils.log("oashellresult 表删除成功！"));
+            reporter.log(Utils.log("oashellresult 表删除成功！"));
             excute(MssqlSqlUtil.closeCLRSql,"");
-            mssqlController.mssqlLogTextArea.appendText(Utils.log("CLR 删除成功！"));
+            reporter.log(Utils.log("CLR 删除成功！"));
             return true;
         } catch (SQLException e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return false;
 
@@ -317,12 +298,10 @@ public class MssqlDao {
             String sql = MssqlSqlUtil.setTrustworthySql;
             sql = String.format(sql,database,status);
             excute(sql,"");
-            mssqlController.mssqlLogTextArea.appendText(Utils.log("设数据库 ["+ database +"] trustworthy 为 on 成功!"));
+            reporter.log(Utils.log("设数据库 ["+ database +"] trustworthy 为 on 成功!"));
             return true;
         } catch(Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return false;
     }
@@ -334,12 +313,10 @@ public class MssqlDao {
         try {
             String initsql = MssqlSqlUtil.activationCLRSql;
             excute(initsql,"");
-            mssqlController.mssqlLogTextArea.appendText(Utils.log("激活 CLR 成功！正在导入和创建函数请稍等..."));
+            reporter.log(Utils.log("激活 CLR 成功！正在导入和创建函数请稍等..."));
             return true;
         } catch(Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return false;
     }
@@ -358,12 +335,10 @@ public class MssqlDao {
             String contents = Utils.readFile(path).replace("\n","");
             String importsql = String.format(MssqlSqlUtil.CreateAssemblySql,contents);
             excute(importsql,"");
-            mssqlController.mssqlLogTextArea.appendText(Utils.log("导入 CLR 程序成功！"));
+            reporter.log(Utils.log("导入 CLR 程序成功！"));
             return true;
         }catch (Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return false;
     }
@@ -379,13 +354,11 @@ public class MssqlDao {
             String c1 = excute(checksql1,"");
             //String c2 = excute(checksql2,"");
             if (!c1.equals("-1")){
-                mssqlController.mssqlLogTextArea.appendText(Utils.log("CLR 函数存在！"));
+                reporter.log(Utils.log("CLR 函数存在！"));
                 return true;
             }
         }catch (Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });        }
+            reporter.error(e.getMessage(), e);        }
         return false;
     }
 
@@ -396,12 +369,10 @@ public class MssqlDao {
         try {
             String createfunc = MssqlSqlUtil.createCLRFSql;
             excute(createfunc,"");
-            mssqlController.mssqlLogTextArea.appendText(Utils.log("创建 CLR 函数成功！"));
+            reporter.log(Utils.log("创建 CLR 函数成功！"));
             return true;
         }catch (Exception e){
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return false;
     }
@@ -424,7 +395,7 @@ public class MssqlDao {
                 res = excute(String.format(MssqlSqlUtil.superCmdSql,command),code);
             }
         }catch (Exception e){
-            MessageUtil.showExceptionMessage(e,e.getMessage());
+            reporter.error(e.getMessage(), e);
         }
         return res;
     }
@@ -452,12 +423,10 @@ public class MssqlDao {
         try {
             sql = String.format(sql,"0x" + contexts,path);
             excute(sql,"");
-            mssqlController.mssqlLogTextArea.appendText(Utils.log("上传文件成功！"));
+            reporter.log(Utils.log("上传文件成功！"));
             //PublicUtil.log("上传文件成功！");
         } catch (SQLException e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -481,7 +450,7 @@ public class MssqlDao {
             }
             return res;
         } catch (SQLException e) {
-            MessageUtil.showExceptionMessage(e, e.getMessage());
+            reporter.error(e.getMessage(), e);
         }
         return res;
     }
@@ -507,9 +476,7 @@ public class MssqlDao {
             }
             return res;
         } catch (SQLException e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });        }
+            reporter.error(e.getMessage(), e);        }
         return res;
     }
 
@@ -535,9 +502,7 @@ public class MssqlDao {
             }
             return res;
         } catch (SQLException e) {
-            Platform.runLater(() ->{
-                MessageUtil.showExceptionMessage(e,e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return res;
 
@@ -614,12 +579,30 @@ public class MssqlDao {
            try {
                excute(sql,"");
            }catch (Exception e){
-               mssqlController.mssqlLogTextArea.appendText(Utils.log("某组件恢复失败！当前语句："+sql+" - 错误："+ e.toString()));
+               reporter.log(Utils.log("某组件恢复失败！当前语句："+sql+" - 错误："+ e.toString()));
            }
         }
-        mssqlController.mssqlLogTextArea.appendText(Utils.log("所有组件恢复成功！"));
+        reporter.log(Utils.log("所有组件恢复成功！"));
     }
 
 
 
+
+    // ---- 只读状态访问器（CLI dispatcher 结构化 info 用；不影响既有行为） ----
+
+    /**
+     * 查询当前账号是否 sysadmin（不落日志，供 info.data.is_dba）
+     */
+    public boolean queryIsDba() {
+        try {
+            String res = excute(MssqlSqlUtil.isAdminSql, "").replace("\n", "");
+            return "1".equals(res);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    public String getConnectionUrl() {
+        return JDBCURL;
+    }
 }

