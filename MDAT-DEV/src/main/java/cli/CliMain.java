@@ -252,7 +252,14 @@ public class CliMain {
             }
         }
 
-        startWatchdog(timeoutSec, taskName, p.command, textMode);
+        // 看门狗预算：redis 主从链（rogue 双 timeout sleep + 同步 + moduleLoad + eval）结构性超过
+        // timeout+5s，按 3×timeout+15s 放宽（docs/3 §5 语义不变：看门狗仍是硬上限兜底）
+        int watchdogSec = timeoutSec;
+        if ("exec".equals(p.command)
+                && (p.flags.containsKey("vps-host") || p.flags.containsKey("vps-port"))) {
+            watchdogSec = timeoutSec * 3 + 15;
+        }
+        startWatchdog(watchdogSec, taskName, p.command, textMode);
         try {
             int exit = dispatch(p, spec, ctx, taskName);
             lastExitCode = exit;

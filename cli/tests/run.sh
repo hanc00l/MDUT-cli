@@ -131,11 +131,12 @@ else
     say "== LAB 用例（依赖本机实例） =="
     # 12 并发 add 同 task（WAL/busy_timeout；需真实可连通目标才能留行）
     if timeout 2 bash -c 'echo -e "PING\r" | nc -q1 -w1 127.0.0.1 6379' 2>/dev/null | grep -q "NOAUTH\|PONG"; then
-        CT="conc-$$"
+        CT="conc-$$-$(date +%s)"   # PID 会跨运行复用，必须叠加时间戳防任务名碰撞
         for i in 1 2 3; do "$MDUT" --task "$CT" add redis --host 127.0.0.1 --port 6379 --pass mirrorstrike >/dev/null 2>&1 & done
         wait
         "$MDUT" --task "$CT" list >"$WORK/o12" 2>/dev/null
         expect_env "并发add-WAL" 0 "$WORK/o12" "len(d['data']['conns'])==3"
+        rm -rf "$MDUT_TASKS_ROOT/$CT"
     else
         blocked "并发add-WAL" "本机 redis 不可达"
     fi

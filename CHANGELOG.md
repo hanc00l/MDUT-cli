@@ -12,8 +12,9 @@
 * **Keep 项**：MSSQL potato 系（五资产+CLR 管道，Extend 对齐）、MongoDB info、Redis CVE 扫描
 ### 验证
 * JUnit 22 例 + golden 黑盒 15 例全绿；JDK 8/11/21/25 运行矩阵通过（17 本机未装）
-* 实测：TC1/TC2（mirrorstrike 非破坏）、TC3（docker MySQL UDF 全链+清痕查证）、TC4 拓扑（隔离网络仅代理可达）
-* BLOCKED 记录：redis 模块链 exp.so 资产兼容、MSSQL potato/Oracle 实弹（无靶标）——详见 docs/3 §10
+* 实测：TC1/TC2（mirrorstrike 非破坏）、TC3（docker MySQL UDF 全链+清痕查证）、TC4 拓扑（隔离网络仅代理可达）、**TC5（172.31.0.21 未授权 Redis 主从 RCE 实弹：slaveof→exp.so 同步→module load→`uid=999(redis)`→clean 恢复查证全绿）**
+* 修复：`exec --vps-*` 看门狗与 rogue 双 timeout sleep 结构性撞车（放宽为 3×timeout+15s）——此前 docker 环境失败归因已修正为该 bug 而非 exp.so 兼容性（docs/3 §10）
+* BLOCKED 记录：MSSQL potato/Oracle 实弹（无靶标）——详见 docs/3 §10
 
 ## 2022/05/24 - `v2.1.1`
 ### 核心
