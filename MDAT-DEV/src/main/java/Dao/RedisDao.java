@@ -230,6 +230,14 @@ public class RedisDao {
     }
 
     /**
+     * 严格版 eval：异常向上抛（原 eval 吞异常返回 "" 保持不动；写类命令需要区分成败）
+     */
+    public String evalStrict(String command, String code) throws Exception {
+        byte[] bytes = (byte[]) CONN.sendCommand(SysCommand.EVAL, command);
+        return bytes == null ? "" : new String(bytes, code);
+    }
+
+    /**
      * 1. 清理目录和本地文件持久化位置修改
      * 2. 关闭主从
      * 3. 卸载导入so函数

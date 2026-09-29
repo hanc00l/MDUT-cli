@@ -48,6 +48,10 @@ public class RedisDispatcher extends BaseDispatcher {
             dao.getConnection();
             String vpsHost = flag(p, "vps-host", "");
             String vpsPort = flag(p, "vps-port", "");
+            if (vpsHost.isEmpty() != vpsPort.isEmpty()) {
+                return Result.usage("--vps-host 与 --vps-port 必须成对传入",
+                        "exec --vps-host <rogue地址> --vps-port <rogue端口> 'id'").withId(id);
+            }
             if (!vpsHost.isEmpty() && !vpsPort.isEmpty()) {
                 // rogue 外部范式：伪主库由调用方先行启动（SKILL 纪律 6），CLI 只做主从对接与模块装载
                 dao.rogue(vpsHost, vpsPort, Math.max(ctx.timeoutSec, 5) * 1000);
@@ -114,7 +118,8 @@ public class RedisDispatcher extends BaseDispatcher {
                 } else {
                     cmd = "mkdir -p " + path;
                 }
-                return Result.ok(nz(dao.eval(cmd, code))).withId(id);
+                String res = dao.evalStrict(cmd, code);   // 严格版：失败抛错由上层转 exit 3
+                return Result.ok(res).withId(id);
             }
             if ("read".equals(tool) || "download".equals(tool)) {
                 String path = p.positionals.get(0).replace("'", "'\\''");
@@ -149,9 +154,13 @@ public class RedisDispatcher extends BaseDispatcher {
                 content = bytes;
                 remote = p.positionals.get(1);
             }
+            if (content.length > 64 * 1024 * 1024) {
+                return Result.usage("文件超过 64MB 上限（base64 管道内存约束）",
+                        "大文件请走 download/upload 通道拆或经代理侧 scp").withId(id);
+            }
             String b64 = java.util.Base64.getEncoder().encodeToString(content);
             String pathEsc = remote.replace("'", "'\\''");
-            dao.eval("echo " + b64 + " | base64 -d > " + pathEsc, "UTF-8");
+            dao.evalStrict("echo " + b64 + " | base64 -d > " + pathEsc, "UTF-8");
             return Result.ok("写入完成: " + remote + " (" + content.length + " bytes，经 system.exec base64 管道)").withId(id);
         }
         return Result.usage("redis 不支持命令: " + tool, "mdut --help 查看命令清单").withId(id);

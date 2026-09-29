@@ -21,24 +21,31 @@ public interface Dispatcher {
      */
     Result handle(String tool, Args.Parsed p, Ctx ctx) throws Exception;
 
-    /** 注册表（dbType 归一名 → dispatcher） */
-    Map<String, Dispatcher> REGISTRY = new LinkedHashMap<String, Dispatcher>();
+    /** 注册表（dbType 归一名 → dispatcher）；holder 惯用法初始化，无懒加载竞态 */
+    Map<String, Dispatcher> REGISTRY = Holder.REGISTRY;
 
     static Dispatcher forType(String dbType) {
-        synchronized (REGISTRY) {
-            if (REGISTRY.isEmpty()) {
-                put(new MysqlDispatcher());
-                put(new MssqlDispatcher());
-                put(new PostgreSqlDispatcher());
-                put(new OracleDispatcher());
-                put(new RedisDispatcher());
-                put(new MongoDispatcher());
-            }
-        }
         return REGISTRY.get(dbType);
     }
 
-    static void put(Dispatcher d) {
-        REGISTRY.put(d.dbType(), d);
+    /** 静态持有者：类加载即注册，线程安全（JLS 初始化语义） */
+    final class Holder {
+        static final Map<String, Dispatcher> REGISTRY = new LinkedHashMap<String, Dispatcher>();
+
+        static {
+            register(new MysqlDispatcher());
+            register(new MssqlDispatcher());
+            register(new PostgreSqlDispatcher());
+            register(new OracleDispatcher());
+            register(new RedisDispatcher());
+            register(new MongoDispatcher());
+        }
+
+        private Holder() {
+        }
+
+        private static void register(Dispatcher d) {
+            REGISTRY.put(d.dbType(), d);
+        }
     }
 }

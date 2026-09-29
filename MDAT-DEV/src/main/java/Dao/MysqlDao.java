@@ -409,9 +409,8 @@ public class MysqlDao {
 
     /** 供 dispatcher 探测 sys_eval 是否已部署（select 1+1 形式不可用时返回 false） */
     public boolean sysEvalExists() {
-        try {
-            PreparedStatement st = CONN.prepareStatement(MysqlSqlUtil.evalSql.replace("%s", "1"));
-            ResultSet rs = st.executeQuery();
+        try (PreparedStatement st = CONN.prepareStatement(MysqlSqlUtil.evalSql.replace("%s", "1"));
+             ResultSet rs = st.executeQuery()) {
             while (rs.next()) {
                 rs.getString("s");
                 return true;
@@ -429,6 +428,7 @@ public class MysqlDao {
     public String runSql(String sql, String code) throws Exception {
         StringBuilder res = new StringBuilder();
         PreparedStatement st = CONN.prepareStatement(sql);
+        try {
         boolean has = st.execute();
         if (has) {
             ResultSet rs = st.getResultSet();
@@ -454,5 +454,8 @@ public class MysqlDao {
             res.append("affected:").append(st.getUpdateCount()).append('\n');
         }
         return res.toString();
+        } finally {
+            st.close();
+        }
     }
 }

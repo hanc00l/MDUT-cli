@@ -4,3 +4,4 @@ cli/tests/.work/
 .staging/
 tasks/
 *.log
+o3t

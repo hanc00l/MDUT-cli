@@ -15,6 +15,11 @@
 * 实测：TC1/TC2（mirrorstrike 非破坏）、TC3（docker MySQL UDF 全链+清痕查证）、TC4 拓扑（隔离网络仅代理可达）、**TC5（172.31.0.21 未授权 Redis 主从 RCE 实弹：slaveof→exp.so 同步→module load→`uid=999(redis)`→clean 恢复查证全绿）**
 * 修复：`exec --vps-*` 看门狗与 rogue 双 timeout sleep 结构性撞车（放宽为 3×timeout+15s）——此前 docker 环境失败归因已修正为该 bug 而非 exp.so 兼容性（docs/3 §10）
 * BLOCKED 记录：MSSQL potato/Oracle 实弹（无靶标）——详见 docs/3 §10
+### 复核收口（独立代码审查 + 自查）
+* 修复 HIGH×3：审计兜底非法 task 名路径穿越（validTaskName 防线）、交付物瘦 jar（assembly appendAssemblyId=false → mdut.jar 即 uber-jar）、task list 误删他人锁文件（tryLock 探测）
+* 修复 MEDIUM×6：审计 argv 敏感值打码（--pass/代理凭据）、未知 flag 白名单拒判（防 --pas 拼错静默成空密码）、stdout 显式 UTF-8、redis 写类命令假成功（evalStrict）、upload 64MB 内存上限、Authenticator 仅应答 SOCKS
+* 修复 LOW/NIT×10：mongo 凭据 URI 编码、vps 旗标成对校验、runSql/sysEvalExists 关资源、taskDir 软链拒判、--sql= 内联值、proxy 解析即校验、wrapper --task 首 token 语义、nc 用例端口空闲探测、REGISTRY holder 初始化、日志时间戳统一
+* 复核后回归：JUnit 22 例 + golden 15 例全绿；dist zip 独立目录自举（version/doctor）正常
 
 ## 2022/05/24 - `v2.1.1`
 ### 核心

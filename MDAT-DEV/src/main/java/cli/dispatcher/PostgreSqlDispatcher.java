@@ -127,6 +127,10 @@ public class PostgreSqlDispatcher extends BaseDispatcher {
                 remote = p.positionals.get(0);
             } else {
                 byte[] bytes = Util.Utils.toByteArray(p.positionals.get(0));
+                if (bytes != null && bytes.length > 64 * 1024 * 1024) {
+                    return Result.usage("文件超过 64MB 上限（SQL 管道内存约束，hex/base64 化会翻倍）",
+                            "大文件请分块写入或用 download/upload 之外的带外通道").withId(id);
+                }
                 if (bytes == null) {
                     return Result.usage("本地文件不可读: " + p.positionals.get(0), "检查路径与权限").withId(id);
                 }

@@ -8,7 +8,7 @@ VER="1.0.0"
 DIST="mdut-cli-2.1.1-cli.${VER}-dist"
 STAGE="$ROOT/MDAT-DEV/target/$DIST"
 
-JAR="$ROOT/MDAT-DEV/target/mdut-jar-with-dependencies.jar"
+JAR="$ROOT/MDAT-DEV/target/mdut.jar"
 [ -f "$JAR" ] || { echo "先构建: mvn -f MDAT-DEV/pom.xml clean package" >&2; exit 1; }
 
 rm -rf "$STAGE"

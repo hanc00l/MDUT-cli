@@ -46,11 +46,11 @@ assert ($pyexpr), '断言失败: '+raw[:200]
 
 # ---- 准备工作区（jar + Driver/Plugins 镜像） ----
 mkdir -p "$WORK"
-if [ ! -f "$ROOT/MDAT-DEV/target/mdut-jar-with-dependencies.jar" ]; then
+if [ ! -f "$ROOT/MDAT-DEV/target/mdut.jar" ]; then
     say "[setup] 构建 jar..."
     (cd "$ROOT/MDAT-DEV" && mvn -q -s "$ROOT/.m2settings.xml" -Dmaven.repo.local="$ROOT/.m2repo" package) || { say "[setup] 构建失败"; exit 1; }
 fi
-cp "$ROOT/MDAT-DEV/target/mdut-jar-with-dependencies.jar" "$WORK/mdut.jar"
+cp "$ROOT/MDAT-DEV/target/mdut.jar" "$WORK/mdut.jar"
 rm -rf "$WORK/Driver" "$WORK/Plugins"
 cp -r "$ROOT/MDAT-DEV/src/main/Driver" "$WORK/Driver"
 cp -r "$ROOT/MDAT-DEV/src/main/Plugins" "$WORK/Plugins"
@@ -92,13 +92,17 @@ if [ $e -eq 3 ] && python3 -c "
 import json;d=json.loads(open('$WORK/o7').read())
 assert d['ok'] is False and d['tool']=='add' and d.get('hint')"; then pass "连接失败-exit3+hint"; else fail "连接失败-exit3+hint" "exit=$e"; fi
 
-# 8 超时 → exit 4（nc 收而不答）
+# 8 超时 → exit 4（nc 收而不答；先探端口空闲，防占用误判）
+if timeout 1 bash -c 'nc -z -w1 127.0.0.1 19299' 2>/dev/null; then
+    blocked "超时-exit4" "端口 19299 已被占用"
+else
 (nc -l -p 19299 >/dev/null 2>&1 &) ; sleep 0.4
 "$MDUT" --task g add mysql --host 127.0.0.1 --port 19299 --timeout 1 >"$WORK/o8" 2>/dev/null; e=$?
-kill %1 2>/dev/null || pkill -f 'nc -l -p 19299' 2>/dev/null || true
+pkill -f 'nc -l -p 19299' 2>/dev/null || true
 if [ $e -eq 4 ] && python3 -c "
 import json;d=json.loads(open('$WORK/o8').read())
 assert d['ok'] is False and ('超时' in d['error'] or 'timeout' in d['error'].lower())"; then pass "超时-exit4"; else fail "超时-exit4" "exit=$e"; fi
+fi
 
 # 9 写锁竞争 → exit 5（python fcntl 持锁，与 Java FileChannel 同命名空间）
 "$MDUT" --task g add redis --host 127.0.0.1 --port 16379 --timeout 1 >/dev/null 2>&1 || true

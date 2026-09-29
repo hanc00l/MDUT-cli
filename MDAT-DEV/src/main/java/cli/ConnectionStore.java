@@ -269,11 +269,25 @@ public class ConnectionStore {
             o.put("task", d.getName());
             File db = new File(d, "data.db");
             o.put("db_size", db.isFile() ? db.length() : 0);
-            File lock = new File(d, ".lock");
-            o.put("locked", lock.isFile() && !lock.delete() && db.isFile());
+            o.put("locked", isLocked(d));
             arr.put(o);
         }
         return arr;
+    }
+
+    /** 探测某 task 的写锁是否被进程持有（tryLock 试取；绝不删除他人锁文件） */
+    private static boolean isLocked(File taskDir) {
+        File lock = new File(taskDir, ".lock");
+        if (!lock.isFile()) {
+            return false;
+        }
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(lock, "rw");
+             java.nio.channels.FileLock fl = raf.getChannel().tryLock()) {
+            return fl == null;
+        } catch (Exception e) {
+            // 取不到锁（含重叠锁冲突）按「被持有」报告
+            return true;
+        }
     }
 
     /** jar 自身所在目录（发布布局基准：<home>/mdut.jar、<home>/Driver、<home>/Plugins、<home>/tasks） */

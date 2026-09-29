@@ -23,12 +23,10 @@ fi
 
 JAVA_BIN="${MDUT_JAVA:-java}"
 
-# ---- task 解析（优先级：$MDUT_TASK 显式 flag > $MDUT_TASK > default） ----
+# ---- task 解析（优先级：--task flag > $MDUT_TASK > default） ----
 TASK="${MDUT_TASK:-default}"
 ARGS=()
-i=0
-N=${#@}
-set -- "$@"
+# --task 仅在命令名（首个非 flag token）之前解析；命令之后的 token 原样透传（含内容恰为 --task 的情况）
 while [ $# -gt 0 ]; do
     case "$1" in
         --task)
@@ -45,9 +43,13 @@ while [ $# -gt 0 ]; do
             shift
             continue
             ;;
-        *)
+        -*)
             ARGS+=("$1")
             shift
+            ;;
+        *)
+            ARGS+=("$@")   # 首个非 flag = 命令；其后全部透传
+            shift $#
             ;;
     esac
 done
@@ -62,13 +64,13 @@ TASKS_ROOT="${MDUT_TASKS_ROOT:-$ROOT/tasks}"
 TASK_DIR="$TASKS_ROOT/$TASK"
 mkdir -p "$TASK_DIR/logs"
 
-# ---- data.db 符号链接拒判（task 隔离红线） ----
-if [ -e "$TASK_DIR/data.db" ] || [ -L "$TASK_DIR/data.db" ]; then
-    if [ -L "$TASK_DIR/data.db" ]; then
-        echo '{"ok":false,"tool":"","error":"data.db 是符号链接，拒绝打开（task 隔离红线）","hint":"删除软链或改用其它 task 名"}' >&2
+# ---- 符号链接拒判（task 隔离红线：data.db 与审计账同守，防跨目录越写） ----
+for f in "$TASK_DIR/data.db" "$TASK_DIR/logs/audit.jsonl"; do
+    if [ -L "$f" ]; then
+        echo '{"ok":false,"tool":"","error":"符号链接拒判: '"$f"'","hint":"删除软链或改用其它 task 名（task 隔离红线）"}' >&2
         exit 2
     fi
-fi
+done
 
 # ---- 网络 fs 拒判（WAL 在 NFS/CIFS 上不安全） ----
 FSTYPE=""

@@ -35,6 +35,8 @@
                 <artifactId>maven-assembly-plugin</artifactId>
                 <version>3.6.0</version>
                 <configuration>
+                    <!-- 主构件即 uber-jar（target/mdut.jar，AGENTS §2.5 验证命令直接可用） -->
+                    <appendAssemblyId>false</appendAssemblyId>
                     <archive>
                         <manifest>
                             <mainClass>cli.CliMain</mainClass>

@@ -33,7 +33,15 @@ public class CliMain {
     public static final String VERSION = "v2.1.1-cli.1.0.0";
 
     /** 真实 stdout（信封专用） */
-    private static final PrintStream STDOUT = new PrintStream(new FileOutputStream(FileDescriptor.out));
+    private static final PrintStream STDOUT = newPrintStreamUtf8();
+
+    private static PrintStream newPrintStreamUtf8() {
+        try {
+            return new PrintStream(new FileOutputStream(FileDescriptor.out), true, "UTF-8");
+        } catch (java.io.UnsupportedEncodingException e) {
+            return new PrintStream(new FileOutputStream(FileDescriptor.out));
+        }
+    }
 
     /** 看门狗已发信封标记（防重复输出） */
     private static volatile boolean envelopePrinted = false;
@@ -114,8 +122,9 @@ public class CliMain {
             return emitFail(taskHolder[0], toolHolder[0], textHolder[0], code, firstLine(t), hint);
         } finally {
             try {
-                if (auditHolder == null && !taskHolder[0].isEmpty()) {
-                    // 前置失败（task 库未开）也落账：审计不断链
+                if (auditHolder == null && !taskHolder[0].isEmpty()
+                        && ConnectionStore.validTaskName(taskHolder[0])) {
+                    // 前置失败（task 库未开）也落账：审计不断链；非法 task 名拒绝落账（路径穿越防线）
                     auditHolder = new AuditLog(ConnectionStore.tasksRoot(ConnectionStore.jarHome())
                             + File.separator + taskHolder[0]);
                 }
@@ -680,7 +689,8 @@ public class CliMain {
                 @Override
                 protected PasswordAuthentication getPasswordAuthentication() {
                     String proto = getRequestingProtocol() == null ? "" : getRequestingProtocol().toUpperCase(java.util.Locale.ROOT);
-                    if (proto.contains("SOCKS") || getRequestingPort() >= 0) {
+                    // 只应答 SOCKS 认证——勿把凭据交给进程内其它协议的认证请求
+                    if (proto.contains("SOCKS")) {
                         return new PasswordAuthentication(u, pw.toCharArray());
                     }
                     return null;
@@ -691,8 +701,8 @@ public class CliMain {
                 + (parts[2].isEmpty() ? "" : " (auth " + parts[2] + ")")));
     }
 
-    /** socks5://[user:pass@]host:port → {host, port, user, pass} */
-    static String[] parseProxyParts(String proxy) {
+    /** socks5://[user:pass@]host:port → {host, port, user, pass}；非法形态抛用法错误 */
+    static String[] parseProxyParts(String proxy) throws Args.UsageException {
         String rest = proxy.substring("socks5://".length());
         String user = "";
         String pass = "";
@@ -710,6 +720,10 @@ public class CliMain {
         if (colon >= 0) {
             host = rest.substring(0, colon);
             port = rest.substring(colon + 1);
+        }
+        if (host.isEmpty() || !port.matches("\\d{1,5}") || Integer.parseInt(port) > 65535) {
+            throw new Args.UsageException("非法代理地址: " + proxy,
+                    "用法: socks5://[user:pass@]host:port（port 1–65535）");
         }
         return new String[]{host, port, user, pass};
     }

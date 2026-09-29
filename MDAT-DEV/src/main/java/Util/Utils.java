@@ -362,7 +362,9 @@ public class Utils {
             e.printStackTrace();
         } finally {
             try {
-                fc.close();
+                if (fc != null) {
+                    fc.close();
+                }
             } catch (IOException e) {
                 e.printStackTrace();
             }

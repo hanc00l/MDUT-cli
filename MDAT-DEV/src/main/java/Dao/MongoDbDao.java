@@ -33,8 +33,10 @@ public class MongoDbDao {
         this.timeoutMs = Integer.parseInt(timeout) * 1000;
     }
 
-    private MongoClient createClient() {
-        String cred = username.isEmpty() ? "" : username + ":" + password + "@";
+    private MongoClient createClient() throws Exception {
+        // 凭据百分号编码后入 URI（密码含 @:/%? 等特殊字符时防解析错位）
+        String cred = username.isEmpty() ? "" :
+                java.net.URLEncoder.encode(username, "UTF-8") + ":" + java.net.URLEncoder.encode(password, "UTF-8") + "@";
         ConnectionString cs = new ConnectionString("mongodb://" + cred + ip + ":" + port + "/"
                 + this.database + "?serverSelectionTimeoutMS=" + timeoutMs + "&connectTimeoutMS=" + timeoutMs);
         return MongoClients.create(cs);
@@ -52,7 +54,7 @@ public class MongoDbDao {
         }
     }
 
-    public synchronized MongoClient getConnection() {
+    public synchronized MongoClient getConnection() throws Exception {
         if (mongoClient == null) {
             mongoClient = createClient();
         }
@@ -73,7 +75,7 @@ public class MongoDbDao {
         }
         Document buildInfo = db.runCommand(new Document("buildInfo", 1));
         res.put("version", String.valueOf(buildInfo.get("version")));
-        res.put("auth", hello.containsKey("isWritablePrimary") && hello.getBoolean("isWritablePrimary")
+        res.put("auth", hello.getBoolean("isWritablePrimary", Boolean.FALSE)
                 ? "ok" : String.valueOf(hello.get("msg")));
         java.util.List<String> dbs = new java.util.ArrayList<>();
         for (Document d : getConnection().listDatabases()) {

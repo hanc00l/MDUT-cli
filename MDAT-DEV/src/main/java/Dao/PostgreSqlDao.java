@@ -397,6 +397,7 @@ public class PostgreSqlDao {
     public String runSql(String sql, String code) throws Exception {
         StringBuilder res = new StringBuilder();
         PreparedStatement st = CONN.prepareStatement(sql);
+        try {
         boolean has = st.execute();
         if (has) {
             ResultSet rs = st.getResultSet();
@@ -422,6 +423,9 @@ public class PostgreSqlDao {
             res.append("affected:").append(st.getUpdateCount()).append('\n');
         }
         return res.toString();
+        } finally {
+            st.close();
+        }
     }
 
     /**

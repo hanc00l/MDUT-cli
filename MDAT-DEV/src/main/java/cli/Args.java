@@ -383,6 +383,13 @@ public final class Args {
         if (p.command == null && p.flags.containsKey("sql") && p.flags.containsKey("id")) {
             p.command = "sql";
         }
+        // --sql="select ..." 内联形式：sql 是布尔旗标，内联值需转为 SQL 位置参数（否则丢失误导报错）
+        if ("sql".equals(p.command) && p.positionals.isEmpty()) {
+            String inline = p.flags.get("sql");
+            if (inline != null && !"true".equals(inline)) {
+                p.positionals.add(inline);
+            }
+        }
         return p;
     }
 
@@ -468,10 +475,26 @@ public final class Args {
     public static final String DISCLAIMER =
             "免责声明: 本工具仅面向授权安全测试与安全研究。对未授权目标使用数据库利用/提权/文件操作能力属违法行为，使用者承担全部责任。";
 
+    /** 全局 flag 白名单（validate 用；命令级 flag 以 spec.opts 为准） */
+    private static final Set<String> GLOBAL_FLAGS = Collections.unmodifiableSet(new LinkedHashSet<>(
+            Arrays.asList("task", "format", "timeout", "proxy", "c", "enc", "help", "version", "sql")));
+
     /**
-     * 校验必填 flag/位置参数（在命令分发前调用）
+     * 校验必填 flag/位置参数 + 未知 flag 拒判（在命令分发前调用）
      */
     public static void validate(Spec s, Parsed p) throws UsageException {
+        // 未知 flag 拒判（拼错参数必须报出来，而不是静默丢弃成缺省值）
+        Set<String> allowed = new LinkedHashSet<>(GLOBAL_FLAGS);
+        allowed.addAll(BOOLEAN_FLAGS);
+        for (Opt o : s.opts) {
+            allowed.add(o.flag);
+        }
+        for (String f : p.flags.keySet()) {
+            if (!allowed.contains(f)) {
+                throw new UsageException("未知参数: --" + f,
+                        "mdut " + s.name + " 可用参数见 mdut help " + s.name);
+            }
+        }
         for (Opt o : s.opts) {
             if (o.required && !p.flags.containsKey(o.flag)) {
                 throw new UsageException("缺少必填参数 --" + o.flag,

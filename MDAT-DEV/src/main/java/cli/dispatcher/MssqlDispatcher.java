@@ -51,7 +51,7 @@ public class MssqlDispatcher extends BaseDispatcher {
             if ("xpcmdshell".equals(method)) {
                 String res = dao.runcmdXPCS(cmd, code);
                 if (res == null || res.isEmpty()) {
-                    ctx.reporter.log("[mdut] xp_cmdshell 无回显，尝试自动激活后重试...");
+                    ctx.reporter.log(Util.Utils.log("[mdut] xp_cmdshell 无回显，尝试自动激活后重试..."));
                     dao.activateXPCS();
                     res = dao.runcmdXPCS(cmd, code);
                 }
@@ -61,7 +61,7 @@ public class MssqlDispatcher extends BaseDispatcher {
                 String fname = "oares" + Utils.getRandomString();
                 String res = dao.runcmdOAPBULK(cmd, fname, String.valueOf(ctx.timeoutSec), code);
                 if (res == null || res.isEmpty()) {
-                    ctx.reporter.log("[mdut] OAP 无回显，尝试自动激活后重试...");
+                    ctx.reporter.log(Util.Utils.log("[mdut] OAP 无回显，尝试自动激活后重试..."));
                     dao.activateOAP();
                     res = dao.runcmdOAPBULK(cmd, fname, String.valueOf(ctx.timeoutSec), code);
                 }
@@ -73,7 +73,7 @@ public class MssqlDispatcher extends BaseDispatcher {
             }
             if ("clr".equals(method)) {
                 if (!dao.checkCLR()) {
-                    ctx.reporter.log("[mdut] CLR 未部署，自动执行部署链（trustworthy→activate→init→create）...");
+                    ctx.reporter.log(Util.Utils.log("[mdut] CLR 未部署，自动执行部署链（trustworthy→activate→init→create）..."));
                     dao.setTrustworthy(rec.get("database"), "on");
                     dao.activateCLR();
                     dao.initCLR();
@@ -148,6 +148,10 @@ public class MssqlDispatcher extends BaseDispatcher {
         }
         if ("upload".equals(tool)) {
             byte[] bytes = Utils.toByteArray(p.positionals.get(0));
+                if (bytes != null && bytes.length > 64 * 1024 * 1024) {
+                    return Result.usage("文件超过 64MB 上限（SQL 管道内存约束，hex/base64 化会翻倍）",
+                            "大文件请分块写入或用 download/upload 之外的带外通道").withId(id);
+                }
             if (bytes == null) {
                 return Result.usage("本地文件不可读: " + p.positionals.get(0), "检查路径与权限").withId(id);
             }
@@ -191,11 +195,9 @@ public class MssqlDispatcher extends BaseDispatcher {
         JSONObject d = new JSONObject();
         if (content.length() <= 64 * 1024) {
             try {
-                byte[] raw = code == null || code.isEmpty()
-                        ? content.getBytes(StandardCharsets.ISO_8859_1)
-                        : content.getBytes(code);
-                d.put("b64", java.util.Base64.getEncoder().encodeToString(content.getBytes(StandardCharsets.UTF_8)));
-                d.put("size", raw.length);
+                byte[] utf8 = content.getBytes(StandardCharsets.UTF_8);
+                d.put("b64", java.util.Base64.getEncoder().encodeToString(utf8));
+                d.put("size", utf8.length);
             } catch (Exception e) {
                 d.put("size", content.length());
             }
