@@ -386,7 +386,7 @@ public class Utils {
     //            sb.append(hex);
     //        }
     //    } catch (Exception e) {
-    //        MessageUtil.showExceptionMessage(e,e.getMessage());
+    //        （CLI 化：原弹窗调用已随 legacy 移除）
     //    }
     //    //System.out.println(sb.toString());
     //    return sb.toString();

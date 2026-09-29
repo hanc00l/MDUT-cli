@@ -1,6 +1,20 @@
 # 更新日志
 > 有空会补补BUG、添添新功能。
 
+## 2026/09/29 - `v2.1.1+cli.1`（cli 分支，纯 CLI 化发行版）
+### 核心
+* **纯 CLI 化**：GUI 源码/资源迁 `src/legacy`（不编译）；产物 uber-jar `mdut.jar`（Main-Class=cli.CliMain）零 javafx/零外置资产
+* **Dao 解耦**：仅换输出口（Reporter 注入）；`DriverLoader` 子加载器直连（JDK8+，消灭 addURL 强转与 regroupDrivers）；`JdbcProfiles` 取代 config.yaml（snakeyaml/pegdown/jjwt/lombok/fastjson 移除）；RedisDao static 转实例
+* **CLI 面**（docs/3 冻结）：add/list/delete/info/exec/sql/clean/revshell + 文件五件套 + upload/download + recovery/deploy + redis crontab/sshkey/rdb + mongodb info + task list/path + doctor + 表驱动 help
+* **task 隔离**：`--task`（wrapper chdir + 守卫）每任务独立 data.db（WAL+busy_timeout）；audit.jsonl 审计账；flock 写锁（exit 5）
+* **输出契约**：单行 JSON 信封 + 退出码 0/2/3/4/5；日志全走 stderr；大文件 `--out` 直存
+* **SOCKS5 仅入站**：`--proxy socks5://`（存量代理自动回放；实测 mysql/pg/redis 过代理全绿）
+* **Keep 项**：MSSQL potato 系（五资产+CLR 管道，Extend 对齐）、MongoDB info、Redis CVE 扫描
+### 验证
+* JUnit 22 例 + golden 黑盒 15 例全绿；JDK 8/11/21/25 运行矩阵通过（17 本机未装）
+* 实测：TC1/TC2（mirrorstrike 非破坏）、TC3（docker MySQL UDF 全链+清痕查证）、TC4 拓扑（隔离网络仅代理可达）
+* BLOCKED 记录：redis 模块链 exp.so 资产兼容、MSSQL potato/Oracle 实弹（无靶标）——详见 docs/3 §10
+
 ## 2022/05/24 - `v2.1.1`
 ### 核心
 * 优化逻辑代码
