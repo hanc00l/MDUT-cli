@@ -423,4 +423,37 @@ public class PostgreSqlDao {
         }
         return res.toString();
     }
+
+    /**
+     * lo_export 写文件原语（M3a；仿 injectUdf 分页管道：lo_create → pg_largeobject 分页 → lo_export → lo_unlink）
+     */
+    public void writeFileLo(String path, byte[] content) throws Exception {
+        int pin = (int) (Math.random() * 900000) + 100000;
+        try {
+            PreparedStatement st = CONN.prepareStatement(String.format(PostgreSqlUtil.locreateSql, String.valueOf(pin)));
+            st.execute();
+
+            int page = 0;
+            int offset = 0;
+            while (offset < content.length) {
+                int len = Math.min(2048, content.length - offset);
+                byte[] chunk = new byte[len];
+                System.arraycopy(content, offset, chunk, 0, len);
+                String hex = Util.Utils.bytes2HexString(chunk);
+                PreparedStatement ins = CONN.prepareStatement(
+                        "INSERT INTO pg_largeobject VALUES (" + pin + ", " + page + ", decode('" + hex + "', 'hex'))");
+                ins.executeUpdate();
+                offset += len;
+                page++;
+            }
+            PreparedStatement ex = CONN.prepareStatement(String.format(PostgreSqlUtil.loexportSql, String.valueOf(pin), path));
+            ex.execute();
+        } finally {
+            try {
+                PreparedStatement ul = CONN.prepareStatement(String.format(PostgreSqlUtil.lounlinkSql, String.valueOf(pin)));
+                ul.execute();
+            } catch (Exception ignore) {
+            }
+        }
+    }
 }

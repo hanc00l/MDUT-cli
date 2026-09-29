@@ -32,6 +32,7 @@ public interface Dispatcher {
                 put(new PostgreSqlDispatcher());
                 put(new OracleDispatcher());
                 put(new RedisDispatcher());
+                put(new MongoDispatcher());
             }
         }
         return REGISTRY.get(dbType);

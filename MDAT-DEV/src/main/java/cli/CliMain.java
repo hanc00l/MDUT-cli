@@ -321,10 +321,6 @@ public class CliMain {
                             "连接不存在: id=" + id, "mdut list 查看当前连接");
                 }
                 String type = rec.get("databasetype");
-                if ("mongodb".equals(type)) {
-                    return emitFail(taskName, p.command, ctx.textMode, ExitCode.USAGE,
-                            "MongoDB 命令面在 M3a 里程碑提供", "当前仅规划 add mongodb + info（docs/2 §7.2）");
-                }
                 Dispatcher d = Dispatcher.forType(type);
                 if (d == null) {
                     return emitFail(taskName, p.command, ctx.textMode, ExitCode.USAGE,
@@ -388,8 +384,11 @@ public class CliMain {
                 defDb = "";
                 break;
             case "mongodb":
-                return emitFail(taskName, "add", ctx.textMode, ExitCode.USAGE,
-                        "MongoDB 命令面在 M3a 里程碑提供", "docs/2 §7.2 Keep 项排期中");
+                // M3a◆ Keep 项：add + info（只读探测面）
+                defPort = "27017";
+                defUser = "";
+                defDb = "admin";
+                break;
             default:
                 return emitFail(taskName, "add", ctx.textMode, ExitCode.USAGE,
                         "未知库类型: " + type, "支持: mysql|mssql|postgresql|oracle|redis|mongodb(M3a)");
@@ -431,6 +430,9 @@ public class CliMain {
             } else if ("oracle".equals(type)) {
                 Dao.OracleDao dao = new Dao.OracleDao(host, port, db, user, pass, timeout, serviceMode);
                 dao.setReporter(reporter);
+                dao.testConnection();
+            } else if ("mongodb".equals(type)) {
+                Dao.MongoDbDao dao = new Dao.MongoDbDao(host, port, user, pass, db, timeout);
                 dao.testConnection();
             } else {
                 throw new IllegalStateException("unreachable type " + type);

