@@ -102,9 +102,15 @@ public class CliMain {
         } catch (Throwable t) {
             int code = ExitCode.classifyTargetException(t);
             lastExitCode = code;
-            String hint = code == ExitCode.TIMEOUT
-                    ? "放宽 --timeout 后重试；或确认目标可达"
-                    : "检查目标/凭据/网络；深排可用 --format text";
+            String msg = String.valueOf(t.getMessage()).toLowerCase(java.util.Locale.ROOT);
+            String hint;
+            if (msg.contains("unknownhost") || msg.contains("no such host") || msg.contains("unresolved")) {
+                hint = "目标主机名本地解析失败；经 --proxy 内网目标建议改用 IP，或在本机 hosts 落映射";
+            } else if (code == ExitCode.TIMEOUT) {
+                hint = "放宽 --timeout 后重试；或确认目标可达";
+            } else {
+                hint = "检查目标/凭据/网络；深排可用 --format text";
+            }
             return emitFail(taskHolder[0], toolHolder[0], textHolder[0], code, firstLine(t), hint);
         } finally {
             try {
@@ -319,6 +325,17 @@ public class CliMain {
                 if (rec == null) {
                     return emitFail(taskName, p.command, ctx.textMode, ExitCode.USAGE,
                             "连接不存在: id=" + id, "mdut list 查看当前连接");
+                }
+                // 存量代理回放：add 时经 --proxy 登记的连接，后续命令自动套用（--proxy 显式传入时覆盖）
+                if (!System.getProperties().containsKey("mdut.proxy")
+                        && "1".equals(rec.get("isproxy")) && "socks5".equals(rec.get("proxytype"))
+                        && !rec.get("proxyaddress").isEmpty()) {
+                    String stored = "socks5://" + rec.get("proxyaddress") + ":" + rec.get("proxyport");
+                    if (!rec.get("proxyusername").isEmpty()) {
+                        stored = "socks5://" + rec.get("proxyusername") + ":" + rec.get("proxypassword")
+                                + "@" + rec.get("proxyaddress") + ":" + rec.get("proxyport");
+                    }
+                    applyProxy(stored);
                 }
                 String type = rec.get("databasetype");
                 Dispatcher d = Dispatcher.forType(type);
