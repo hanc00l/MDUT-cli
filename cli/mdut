@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# mdut — MDUT-CLI 真实入口 wrapper（docs/2 §8.2 / docs/3 §6）
+#
+# 职责：task 解析与 chdir → 守卫（task 名/符号链接/网络 fs）→ 注入 -Dmdut.task → exec java
+# 依赖布局：本脚本位于 <root>/cli/mdut，jar 位于 <root>/mdut.jar（兼容 <root>/cli/mdut.jar）
+# 环境：MDUT_JAVA（指定 java 可执行）、MDUT_JAVA_OPTS（附加 JVM 参数）、MDUT_TASK（缺省 task）
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(dirname "$SCRIPT_DIR")"
+
+# ---- 定位 jar（发布布局 <root>/mdut.jar；兜底 <root>/cli/mdut.jar；开发态 MDUT_JAR 覆盖） ----
+if [ -n "${MDUT_JAR:-}" ]; then
+    JAR="$MDUT_JAR"
+elif [ -f "$ROOT/mdut.jar" ]; then
+    JAR="$ROOT/mdut.jar"
+elif [ -f "$SCRIPT_DIR/mdut.jar" ]; then
+    JAR="$SCRIPT_DIR/mdut.jar"
+else
+    echo "[mdut] 未找到 mdut.jar（期望 $ROOT/mdut.jar，或用 MDUT_JAR=... 指定）" >&2
+    exit 2
+fi
+
+JAVA_BIN="${MDUT_JAVA:-java}"
+
+# ---- task 解析（优先级：$MDUT_TASK 显式 flag > $MDUT_TASK > default） ----
+TASK="${MDUT_TASK:-default}"
+ARGS=()
+i=0
+N=${#@}
+set -- "$@"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --task)
+            if [ $# -lt 2 ]; then
+                echo '{"ok":false,"task":"","tool":"","error":"--task 缺少值","hint":"用法: mdut --task NAME <command>"}' >&2
+                exit 2
+            fi
+            TASK="$2"
+            shift 2
+            continue
+            ;;
+        --task=*)
+            TASK="${1#--task=}"
+            shift
+            continue
+            ;;
+        *)
+            ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# ---- task 名守卫（与 Java 侧同款正则；拒绝 .. / / \ 等） ----
+if ! [[ "$TASK" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
+    echo "{\"ok\":false,\"task\":\"\",\"tool\":\"\",\"error\":\"非法 task 名: $TASK\",\"hint\":\"允许 [A-Za-z0-9_-]{1,64}\"}" >&2
+    exit 2
+fi
+
+TASKS_ROOT="${MDUT_TASKS_ROOT:-$ROOT/tasks}"
+TASK_DIR="$TASKS_ROOT/$TASK"
+mkdir -p "$TASK_DIR/logs"
+
+# ---- data.db 符号链接拒判（task 隔离红线） ----
+if [ -e "$TASK_DIR/data.db" ] || [ -L "$TASK_DIR/data.db" ]; then
+    if [ -L "$TASK_DIR/data.db" ]; then
+        echo '{"ok":false,"tool":"","error":"data.db 是符号链接，拒绝打开（task 隔离红线）","hint":"删除软链或改用其它 task 名"}' >&2
+        exit 2
+    fi
+fi
+
+# ---- 网络 fs 拒判（WAL 在 NFS/CIFS 上不安全） ----
+FSTYPE=""
+if command -v findmnt >/dev/null 2>&1; then
+    FSTYPE="$(findmnt -n -o FSTYPE -T "$TASK_DIR" 2>/dev/null || true)"
+fi
+case "$FSTYPE" in
+    nfs|nfs4|cifs|smbfs|ncpfs|afs|9p|fuse.sshfs)
+        echo "{\"ok\":false,\"tool\":\"\",\"error\":\"task 目录位于网络文件系统 ($FSTYPE)，SQLite WAL 不安全\",\"hint\":\"把 tasks-root 放本地盘：MDUT_TASKS_ROOT=<本地路径> 重建任务\"}" >&2
+        exit 2
+        ;;
+esac
+
+cd "$TASK_DIR"
+exec "$JAVA_BIN" ${MDUT_JAVA_OPTS:-} -Dmdut.task="$TASK" -Dmdut.tasks-root="$TASKS_ROOT" -Djava.awt.headless=true -jar "$JAR" "${ARGS[@]+"${ARGS[@]}"}"

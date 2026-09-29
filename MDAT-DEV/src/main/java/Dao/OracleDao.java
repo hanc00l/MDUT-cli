@@ -42,9 +42,16 @@ public class OracleDao {
     }
 
     public OracleDao(String ip,String port,String database,String username,String password,String timeout) throws Exception {
+        this(ip,port,database,username,password,timeout,false);
+    }
+
+    /**
+     * 服务名模式重载（CLI --oracle-service；原 SID 行为不变，additive）
+     */
+    public OracleDao(String ip,String port,String database,String username,String password,String timeout,boolean serviceMode) throws Exception {
         // 零配置：驱动与 URL 模板取自 JdbcProfiles（原 config.yaml 的 Oracle.* 三项）
         JARFILE = JdbcProfiles.driverPath(JdbcProfiles.ORACLE_JAR);
-        JDBCURL = JdbcProfiles.ORACLE_URL_SID;
+        JDBCURL = serviceMode ? JdbcProfiles.ORACLE_URL_SERVICE : JdbcProfiles.ORACLE_URL_SID;
         DRIVER = JdbcProfiles.ORACLE_CLASS;
         // 进行时间转换
         timeout = String.valueOf(Integer.parseInt(timeout) * 1000);

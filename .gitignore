@@ -1,1 +1,6 @@
 **/.DS_Store
+.m2repo/
+cli/tests/.work/
+.staging/
+tasks/
+*.log

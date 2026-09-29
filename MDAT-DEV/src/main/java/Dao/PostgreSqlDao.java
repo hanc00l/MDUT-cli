@@ -390,4 +390,37 @@ public class PostgreSqlDao {
     public String getSystemTempPath() {
         return systemTempPath;
     }
+
+    /**
+     * 原生 SQL 直通（CLI sql 命令用；结果集按行列拼接，tab 分隔；不改变既有方法）
+     */
+    public String runSql(String sql, String code) throws Exception {
+        StringBuilder res = new StringBuilder();
+        PreparedStatement st = CONN.prepareStatement(sql);
+        boolean has = st.execute();
+        if (has) {
+            ResultSet rs = st.getResultSet();
+            ResultSetMetaData md = rs.getMetaData();
+            int n = md.getColumnCount();
+            while (rs.next()) {
+                for (int i = 1; i <= n; i++) {
+                    String v;
+                    try {
+                        byte[] b = rs.getBytes(i);
+                        v = b == null ? "NULL" : new String(b, code == null || code.isEmpty() ? "UTF-8" : code);
+                    } catch (Exception e) {
+                        v = rs.getString(i);
+                    }
+                    res.append(v == null ? "NULL" : v);
+                    if (i < n) {
+                        res.append('\t');
+                    }
+                }
+                res.append('\n');
+            }
+        } else {
+            res.append("affected:").append(st.getUpdateCount()).append('\n');
+        }
+        return res.toString();
+    }
 }

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 工作区级 Maven 设置：central 走 Aliyun 镜像（沙箱网络对 repo.maven.apache.org 不稳）。
+     用法：mvn -s /opt/MDUT-cli/.m2settings.xml -Dmaven.repo.local=/opt/MDUT-cli/.m2repo ... -->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+    <mirrors>
+        <mirror>
+            <id>aliyun-public</id>
+            <mirrorOf>central</mirrorOf>
+            <name>Aliyun Public</name>
+            <url>https://maven.aliyun.com/repository/public</url>
+        </mirror>
+    </mirrors>
+</settings>
