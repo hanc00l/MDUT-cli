@@ -143,6 +143,10 @@ public class MssqlDispatcher extends BaseDispatcher {
         }
         if ("write".equals(tool)) {
             byte[] content = readContent(p);
+            if (content.length > 64 * 1024 * 1024) {
+                return Result.usage("写入内容超过 64MB 上限（SQL 管道内存约束）",
+                        "大文件请走 upload 直传通道或分块写入").withId(id);
+            }
             dao.normalUpload(p.positionals.get(0), Utils.bytes2HexString(content));
             return Result.ok("写入完成: " + p.positionals.get(0) + " (" + content.length + " bytes)").withId(id);
         }

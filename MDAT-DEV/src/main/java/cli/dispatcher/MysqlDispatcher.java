@@ -109,6 +109,10 @@ public class MysqlDispatcher extends BaseDispatcher {
             String remote;
             if ("write".equals(tool)) {
                 content = MssqlDispatcher.readContent(p);
+            if (content.length > 64 * 1024 * 1024) {
+                return Result.usage("写入内容超过 64MB 上限（SQL 管道内存约束）",
+                        "大文件请走 upload 直传通道或分块写入").withId(id);
+            }
                 remote = p.positionals.get(0);
             } else {
                 byte[] bytes = Util.Utils.toByteArray(p.positionals.get(0));
