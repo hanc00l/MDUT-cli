@@ -48,10 +48,8 @@ public class MysqlDispatcher extends BaseDispatcher {
             dao.getConnection();
             String res = dao.eval(cmd, code);
             if (!dao.sysEvalExists()) {
-                // 自动部署链（docs/3 §3.2）：getInfo→initUDF→udf(sys_eval) 后重试一次
-                ctx.reporter.log(Util.Utils.log("[mdut] sys_eval 未部署，自动执行 UDF 部署链..."));
-                dao.getInfo();
-                dao.udf("sys_eval");
+                // 自动部署链（docs/3 §3.2）：载荷缺失会如实报错（不写空载荷）
+                ensureSysEval(dao, ctx);
                 res = dao.eval(cmd, code);
             }
             return Result.ok(res).withId(id);
@@ -133,11 +131,17 @@ public class MysqlDispatcher extends BaseDispatcher {
         return Result.usage("mysql 不支持命令: " + tool, "mdut --help 查看命令清单").withId(id);
     }
 
-    /** sys_eval 自动部署链（幂等：已部署直接返回） */
+    /** sys_eval 自动部署链（幂等：已部署直接返回）；载荷缺失时如实报错（不写空载荷） */
     private void ensureSysEval(MysqlDao dao, Ctx ctx) throws Exception {
         if (!dao.sysEvalExists()) {
+            dao.getInfo(); // 先探测平台（Option() 需 platform 选 hex 资产）
+            String assetDir = ctx.jarHome + java.io.File.separator + "Plugins" + java.io.File.separator + "Mysql";
+            java.io.File[] assets = new java.io.File(assetDir).listFiles();
+            if (assets == null || assets.length == 0) {
+                throw new Exception("UDF 载荷缺失: " + assetDir
+                        + "（上传最小套件需带 Plugins/Mysql/udf_*_hex.txt；doctor 可自检）");
+            }
             ctx.reporter.log(Util.Utils.log("[mdut] sys_eval 未部署，自动执行 UDF 部署链..."));
-            dao.getInfo();
             dao.udf("sys_eval");
         }
     }

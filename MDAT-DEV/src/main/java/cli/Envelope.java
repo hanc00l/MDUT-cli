@@ -32,6 +32,15 @@ public final class Envelope {
         return sb.toString();
     }
 
+    public static String failureData(String task, String tool, String id, String error, String hint, JSONObject data) {
+        String base = failure(task, tool, id, error, hint);
+        if (data == null || data.length() == 0) {
+            return base;
+        }
+        // 在结尾 '}' 前插入 data 段（字段序固定，保持单行）
+        return base.substring(0, base.length() - 1) + ",\"data\":" + data.toString() + "}";
+    }
+
     public static String failure(String task, String tool, String id, String error, String hint) {
         StringBuilder sb = new StringBuilder(128);
         sb.append("{\"ok\":false");

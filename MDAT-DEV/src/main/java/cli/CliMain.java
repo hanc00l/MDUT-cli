@@ -615,8 +615,8 @@ public class CliMain {
         d.put("checks", checks);
         emit(taskName, "doctor", null, ctx.textMode,
                 allOk ? Envelope.success(taskName, "doctor", null, "全部检查通过", d)
-                        : Envelope.failure(taskName, "doctor", null, "存在未通过检查项（见 data.checks）",
-                        "按 checks 明细修复；驱动缺失参照发布包附带的 Driver/ 目录"));
+                        : Envelope.failureData(taskName, "doctor", null, "存在未通过检查项（见 data.checks）",
+                        "按 checks 明细修复；驱动缺失参照发布包附带的 Driver/ 目录", d));
         return allOk ? ExitCode.OK : ExitCode.TARGET;
     }
 
